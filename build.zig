@@ -18,9 +18,10 @@ pub fn build(b: *std.Build) void {
 
     // check step
     {
-        const check_test_exe = b.addTest(.{ .root_module = devicetree_mod });
+        // FIXME: `-fno-emit-bin` with c files is broken https://github.com/ziglang/zig/issues/22682
+        // const check_test_exe = b.addTest(.{ .root_module = devicetree_mod });
         const check_test_step = b.step("check", "");
-        check_test_step.dependOn(&check_test_exe.step);
+        check_test_step.dependOn(&test_exe.step);
     }
 }
 
