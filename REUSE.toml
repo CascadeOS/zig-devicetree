@@ -5,3 +5,9 @@ version = 1
 SPDX-PackageName = "zig-devicetree"
 SPDX-PackageSupplier = "Lee Cannon <leecannon@leecannon.xyz>"
 SPDX-PackageDownloadLocation = "https://github.com/CascadeOS/zig-devicetree"
+
+[[annotations]]
+path = "**.md"
+precedence = "aggregate"
+SPDX-License-Identifier = "CC0-1.0"
+SPDX-FileCopyrightText = "2025 Lee Cannon <leecannon@leecannon.xyz>"
