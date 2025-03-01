@@ -457,13 +457,6 @@ const char *fdt_get_alias_namelen(const void *fdt,
 	return alias;
 }
 
-
-const char *fdt_get_symbol_namelen(const void *fdt,
-				   const char *name, int namelen)
-{
-	return fdt_path_getprop_namelen(fdt, "/__symbols__", name, namelen, NULL);
-}
-
 int fdt_get_path(const void *fdt, int nodeoffset, char *buf, int buflen)
 {
 	int pdepth = 0, p = 0;

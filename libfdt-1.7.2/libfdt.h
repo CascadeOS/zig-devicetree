@@ -603,21 +603,6 @@ const char *fdt_get_alias_namelen(const void *fdt,
 				  const char *name, int namelen);
 
 /**
- * fdt_get_symbol_namelen - get symbol based on substring
- * @fdt: pointer to the device tree blob
- * @name: name of the symbol to look up
- * @namelen: number of characters of name to consider
- *
- * Identical to fdt_get_symbol(), but only examine the first @namelen
- * characters of @name for matching the symbol name.
- *
- * Return: a pointer to the expansion of the symbol named @name, if it exists,
- *	   NULL otherwise
- */
-const char *fdt_get_symbol_namelen(const void *fdt,
-				   const char *name, int namelen);
-
-/**
  * fdt_get_path - determine the full path of a node
  * @fdt: pointer to the device tree blob
  * @nodeoffset: offset of the node whose path to find

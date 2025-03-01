@@ -219,23 +219,6 @@ pub const FDT = opaque {
         return std.mem.sliceTo(c_str, 0);
     }
 
-    /// Get the path referenced by a given symbol.
-    ///
-    /// That is, the value of the property named @name in the node /__symbols__.
-    ///
-    /// Such a node exists only for a device tree blob that has been compiled with the -@ dtc option.
-    ///
-    /// Each property corresponds to a label appearing in the device tree source, with the name of the
-    /// property being the label and the value being the full path of the node it is attached to.
-    pub fn getSymbol(fdt: *const FDT, symbol: []const u8) !?[]const u8 {
-        const opt_c_str: ?[*:0]const u8 = c.fdt_get_symbol_namelen(
-            @ptrCast(fdt),
-            symbol.ptr,
-            @intCast(symbol.len),
-        );
-        const c_str = opt_c_str orelse return null;
-        return std.mem.sliceTo(c_str, 0);
-    }
 
     /// Find a node with a compatible property matching `compatible`.
     ///
