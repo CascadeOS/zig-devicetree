@@ -8,5 +8,12 @@
 
     .minimum_zig_version = "0.14.0-dev.3356+5e20e9b44",
 
-    .paths = .{""},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "LICENSE",
+        "src/devicetree.zig",
+        "musl",
+        "libfdt-1.7.2",
+    },
 }
