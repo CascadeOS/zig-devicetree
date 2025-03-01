@@ -43,6 +43,11 @@ pub const FDT = opaque {
         try ret.toError();
     }
 
+    test checkHeader {
+        const fdt = FDT.fromSlice(test_dtb);
+        try fdt.checkHeader();
+    }
+
     /// Sanity check a device tree.
     pub fn checkFull(fdt: *const FDT, buf_size: usize) !void {
         const ret: ReturnValue = @enumFromInt(c.fdt_check_full(
@@ -50,6 +55,11 @@ pub const FDT = opaque {
             buf_size,
         ));
         try ret.toError();
+    }
+
+    test checkFull {
+        const fdt = FDT.fromSlice(test_dtb);
+        try fdt.checkFull(test_dtb.len);
     }
 
     /// Extracts the header from an FDT.
@@ -116,6 +126,22 @@ pub const FDT = opaque {
         return h;
     }
 
+    test header {
+        const fdt = FDT.fromSlice(test_dtb);
+        const h = try fdt.header();
+
+        try customExpectEqual(h.magic, c.FDT_MAGIC);
+        try customExpectEqual(h.totalsize, test_dtb.len);
+        try customExpectEqual(h.off_dt_struct, 88);
+        try customExpectEqual(h.off_dt_strings, 5164);
+        try customExpectEqual(h.off_mem_rsvmap, 40);
+        try customExpectEqual(h.version, 17);
+        try customExpectEqual(h.last_comp_version, 16);
+        try customExpectEqual(h.boot_cpuid_phys, 0);
+        try customExpectEqual(h.size_dt_strings, 503);
+        try customExpectEqual(h.size_dt_struct, 5076);
+    }
+
     /// Find a node by its full path.
     ///
     /// `findNodeWithPath` finds a node of a given path in the device tree.
@@ -145,7 +171,7 @@ pub const FDT = opaque {
     /// these would be equivalent:
     ///  - `/soc@0/i2c@30a40000/eeprom@52`
     ///  - `i2c2/eeprom@52`
-    pub fn findNodeWithPath(fdt: *const FDT, path: []const u8) !?Node {
+    pub fn findWithPath(fdt: *const FDT, path: []const u8) !?Node {
         const ret: ReturnValue = @enumFromInt(c.fdt_path_offset_namelen(
             @ptrCast(fdt),
             path.ptr,
@@ -153,6 +179,31 @@ pub const FDT = opaque {
         ));
         if (ret == .NotFound) return null;
         return try ret.toOffset(Node);
+    }
+
+    test findWithPath {
+        const fdt = FDT.fromSlice(test_dtb);
+
+        // with address
+        const serial_node = try fdt.findWithPath("/soc/serial@10000000");
+        try std.testing.expectEqualStrings(
+            "serial@10000000",
+            try serial_node.?.getName(fdt),
+        );
+
+        // without address
+        const rtc_node = try fdt.findWithPath("/soc/rtc");
+        try std.testing.expectEqualStrings(
+            "rtc@101000",
+            try rtc_node.?.getName(fdt),
+        );
+
+        // alias
+        const memory_node = try fdt.findWithPath("memory");
+        try std.testing.expectEqualStrings(
+            "memory@80000000",
+            try memory_node.?.getName(fdt),
+        );
     }
 
     /// The number of memory reserve map entries.
@@ -163,8 +214,15 @@ pub const FDT = opaque {
         const ret: ReturnValue = @enumFromInt(c.fdt_num_mem_rsv(
             @ptrCast(fdt),
         ));
-        try ret.toError();
-        return @intCast(@intFromEnum(ret));
+        return try ret.toValue();
+    }
+
+    test numberOfMemoryReservations {
+        const fdt = FDT.fromSlice(test_dtb);
+        try customExpectEqual(
+            try fdt.numberOfMemoryReservations(),
+            2,
+        );
     }
 
     /// Retrieves the memory reservation at `index`.
@@ -180,10 +238,12 @@ pub const FDT = opaque {
         return reservation;
     }
 
-    pub const MemoryReservation = struct {
-        address: u64,
-        size: u64,
-    };
+    test getMemoryReservation {
+        const fdt = FDT.fromSlice(test_dtb);
+        const reservation = try fdt.getMemoryReservation(1);
+        try customExpectEqual(reservation.address, 0x12345678);
+        try customExpectEqual(reservation.size, 0x1234);
+    }
 
     /// Iterates over the memory reservations in an FDT.
     pub fn memoryReservationIterator(fdt: *const FDT) !MemoryReservationIterator {
@@ -207,6 +267,20 @@ pub const FDT = opaque {
         }
     };
 
+    test memoryReservationIterator {
+        const fdt = FDT.fromSlice(test_dtb);
+        var reservations = try fdt.memoryReservationIterator();
+        try customExpectEqual(
+            try reservations.next(),
+            .{ .address = 0x10000000, .size = 0x4000 },
+        );
+        try customExpectEqual(
+            try reservations.next(),
+            .{ .address = 0x12345678, .size = 0x1234 },
+        );
+        try customExpectEqual(try reservations.next(), null);
+    }
+
     /// Retrieve the path referenced by a given alias. That is, the value of the property named @name in the node /
     /// aliases.
     pub fn getAlias(fdt: *const FDT, alias: []const u8) !?[]const u8 {
@@ -219,6 +293,11 @@ pub const FDT = opaque {
         return std.mem.sliceTo(c_str, 0);
     }
 
+    test getAlias {
+        const fdt = FDT.fromSlice(test_dtb);
+        const path = try fdt.getAlias("off");
+        try std.testing.expectEqualStrings("/poweroff", path.?);
+    }
 
     /// Find a node with a compatible property matching `compatible`.
     ///
@@ -232,6 +311,14 @@ pub const FDT = opaque {
         ));
         if (ret == .NotFound) return null;
         return try ret.toOffset(Node);
+    }
+
+    test findWithCompatible {
+        const fdt = FDT.fromSlice(test_dtb);
+        try std.testing.expect(try fdt.findWithCompatible(
+            .all,
+            "syscon-poweroff",
+        ) != null);
     }
 
     /// Iterate over all nodes after `after`.
@@ -259,11 +346,59 @@ pub const FDT = opaque {
         }
     };
 
+    test nodeIterator {
+        const fdt = FDT.fromSlice(test_dtb);
+
+        var count: usize = 0;
+
+        var node_iter = fdt.nodeIterator(.all);
+        while (try node_iter.next()) |node| {
+            switch (count) {
+                0 => try std.testing.expectEqualStrings("", try node.getName(fdt)),
+                1 => try std.testing.expectEqualStrings("aliases", try node.getName(fdt)),
+                2 => try std.testing.expectEqualStrings("poweroff", try node.getName(fdt)),
+                3 => try std.testing.expectEqualStrings("reboot", try node.getName(fdt)),
+                4 => try std.testing.expectEqualStrings("platform-bus@4000000", try node.getName(fdt)),
+                5 => try std.testing.expectEqualStrings("memory@80000000", try node.getName(fdt)),
+                6 => try std.testing.expectEqualStrings("cpus", try node.getName(fdt)),
+                7 => try std.testing.expectEqualStrings("cpu@0", try node.getName(fdt)),
+                8 => try std.testing.expectEqualStrings("interrupt-controller", try node.getName(fdt)),
+                9 => try std.testing.expectEqualStrings("cpu-map", try node.getName(fdt)),
+                10 => try std.testing.expectEqualStrings("cluster0", try node.getName(fdt)),
+                11 => try std.testing.expectEqualStrings("core0", try node.getName(fdt)),
+                12 => try std.testing.expectEqualStrings("pmu", try node.getName(fdt)),
+                13 => try std.testing.expectEqualStrings("fw-cfg@10100000", try node.getName(fdt)),
+                14 => try std.testing.expectEqualStrings("flash@20000000", try node.getName(fdt)),
+                15 => try std.testing.expectEqualStrings("chosen", try node.getName(fdt)),
+                16 => try std.testing.expectEqualStrings("soc", try node.getName(fdt)),
+                17 => try std.testing.expectEqualStrings("rtc@101000", try node.getName(fdt)),
+                18 => try std.testing.expectEqualStrings("serial@10000000", try node.getName(fdt)),
+                19 => try std.testing.expectEqualStrings("test@100000", try node.getName(fdt)),
+                20 => try std.testing.expectEqualStrings("virtio_mmio@10008000", try node.getName(fdt)),
+                21 => try std.testing.expectEqualStrings("virtio_mmio@10007000", try node.getName(fdt)),
+                22 => try std.testing.expectEqualStrings("virtio_mmio@10006000", try node.getName(fdt)),
+                23 => try std.testing.expectEqualStrings("virtio_mmio@10005000", try node.getName(fdt)),
+                24 => try std.testing.expectEqualStrings("virtio_mmio@10004000", try node.getName(fdt)),
+                25 => try std.testing.expectEqualStrings("virtio_mmio@10003000", try node.getName(fdt)),
+                26 => try std.testing.expectEqualStrings("virtio_mmio@10002000", try node.getName(fdt)),
+                27 => try std.testing.expectEqualStrings("virtio_mmio@10001000", try node.getName(fdt)),
+                28 => try std.testing.expectEqualStrings("plic@c000000", try node.getName(fdt)),
+                29 => try std.testing.expectEqualStrings("clint@2000000", try node.getName(fdt)),
+                30 => try std.testing.expectEqualStrings("pci@30000000", try node.getName(fdt)),
+                else => {},
+            }
+
+            count += 1;
+        }
+
+        try customExpectEqual(count, 31);
+    }
+
     /// Find a node with a given name.
     ///
     /// Returns the first node after `after`, which has a property named `name`.
     ///
-    /// If `after` is `.search_include_root` the very first such node in the tree will be returned even root.
+    /// If `after` is `.all` all nodes will be considered even root.
     pub fn findWithName(fdt: *const FDT, after: Node, name: [:0]const u8) !?Node {
         var node_iter = fdt.nodeIterator(after);
         while (try node_iter.next()) |node| {
@@ -286,11 +421,23 @@ pub const FDT = opaque {
         return null;
     }
 
+    test findWithName {
+        const fdt = FDT.fromSlice(test_dtb);
+
+        // with address
+        const plic_node = try fdt.findWithName(.all, "plic@c000000");
+        try std.testing.expectEqualStrings("plic@c000000", try plic_node.?.getName(fdt));
+
+        // without address
+        const pci_node = try fdt.findWithName(.all, "pci");
+        try std.testing.expectEqualStrings("pci@30000000", try pci_node.?.getName(fdt));
+    }
+
     /// Find a node with a given property.
     ///
     /// Returns the first node after `after`, which has a property named `name`.
     ///
-    /// If `after` is `.search_include_root` the very first such node in the tree will be returned even root.
+    /// If `after` is `.all` all nodes will be considered even root.
     pub fn findWithProperty(fdt: *const FDT, after: Node, property_name: [:0]const u8) !?Node {
         var node_iter = fdt.nodeIterator(after);
         while (try node_iter.next()) |node| {
@@ -301,11 +448,18 @@ pub const FDT = opaque {
         return null;
     }
 
+    test findWithProperty {
+        const fdt = FDT.fromSlice(test_dtb);
+
+        const serial_node = try fdt.findWithProperty(.all, "clock-frequency");
+        try std.testing.expectEqualStrings("serial@10000000", try serial_node.?.getName(fdt));
+    }
+
     /// Find a node with a given property value.
     ///
     /// Returns the first node after `after`, which has a property named `name` whose value is `value`.
     ///
-    /// If `after` is `.search_include_root` the very first such node in the tree will be returned even root.
+    /// If `after` is `.all` all nodes will be considered even root.
     pub fn findWithPropertyValue(fdt: *const FDT, after: Node, name: [:0]const u8, value: Property.Value) !?Node {
         const ret: ReturnValue = @enumFromInt(c.fdt_node_offset_by_prop_value(
             @ptrCast(fdt),
@@ -318,43 +472,16 @@ pub const FDT = opaque {
         return try ret.toOffset(Node);
     }
 
-    pub const Header = struct {
-        /// magic word
-        magic: u32,
+    test findWithPropertyValue {
+        const fdt = FDT.fromSlice(test_dtb);
 
-        /// total size of DT block
-        totalsize: u32,
-
-        /// offset to structure
-        off_dt_struct: u32,
-
-        /// offset to strings
-        off_dt_strings: u32,
-
-        /// offset to memory reserve map
-        off_mem_rsvmap: u32,
-
-        /// format version
-        version: u32,
-
-        /// last compatible version
-        last_comp_version: u32,
-
-        /// Which physical CPU id we're booting on
-        ///
-        /// Available from version 2
-        boot_cpuid_phys: u32,
-
-        /// size of the strings block
-        ///
-        /// Available from version 3
-        size_dt_strings: u32,
-
-        /// size of the structure block
-        ///
-        /// Available from version 17
-        size_dt_struct: u32,
-    };
+        const pci_node = try fdt.findWithPropertyValue(
+            .all,
+            "device_type",
+            .fromString("pci"),
+        );
+        try std.testing.expectEqualStrings("pci@30000000", try pci_node.?.getName(fdt));
+    }
 };
 
 pub const Node = enum(c_int) {
@@ -367,7 +494,7 @@ pub const Node = enum(c_int) {
     ///  - `findWithProperty`
     ///  - `findWithPropertyValue`
     ///  - `findWithCompatible`
-    search_include_root = -1,
+    all = -1,
 
     _,
 
@@ -385,6 +512,12 @@ pub const Node = enum(c_int) {
         return c_str[0..len :0];
     }
 
+    test getName {
+        const fdt = FDT.fromSlice(test_dtb);
+        const node = try Node.root.firstSubnode(fdt);
+        try std.testing.expectEqualStrings("aliases", try node.?.getName(fdt));
+    }
+
     /// Get the first direct subnode of `parent`.
     ///
     /// See `subnodeIterator` for an alternative.
@@ -394,6 +527,14 @@ pub const Node = enum(c_int) {
             @intFromEnum(parent),
         ));
         return try ret.toOffset(Node);
+    }
+
+    test firstSubnode {
+        const fdt = FDT.fromSlice(test_dtb);
+        const cpus_node = try fdt.findWithName(.all, "cpus");
+
+        const node = try cpus_node.?.firstSubnode(fdt);
+        try std.testing.expectEqualStrings("cpu@0", try node.?.getName(fdt));
     }
 
     /// Get the next direct subnode after `node`.
@@ -407,6 +548,20 @@ pub const Node = enum(c_int) {
             @intFromEnum(node),
         ));
         return try ret.toOffset(Node);
+    }
+
+    test nextSubnode {
+        const fdt = FDT.fromSlice(test_dtb);
+
+        const cpus_node = try fdt.findWithName(.all, "cpus");
+
+        const cpu0_node = try cpus_node.?.firstSubnode(fdt);
+        try std.testing.expectEqualStrings("cpu@0", try cpu0_node.?.getName(fdt));
+
+        const cpu_map_node = try cpu0_node.?.nextSubnode(fdt);
+        try std.testing.expectEqualStrings("cpu-map", try cpu_map_node.?.getName(fdt));
+
+        try customExpectEqual(try cpu_map_node.?.nextSubnode(fdt), null);
     }
 
     /// Find a subnode of `parent` with the given `name`.
@@ -423,6 +578,18 @@ pub const Node = enum(c_int) {
         ));
         if (ret == .NotFound) return null;
         return try ret.toOffset(Node);
+    }
+
+    test findSubnodeWithName {
+        const fdt = FDT.fromSlice(test_dtb);
+
+        // with address
+        const plaform_bus_node = try Node.root.findSubnodeWithName("platform-bus@4000000", fdt);
+        try std.testing.expectEqualStrings("platform-bus@4000000", try plaform_bus_node.?.getName(fdt));
+
+        // no address
+        const memory_node = try Node.root.findSubnodeWithName("memory", fdt);
+        try std.testing.expectEqualStrings("memory@80000000", try memory_node.?.getName(fdt));
     }
 
     /// Iterate over all subnodes of `parent`.
@@ -459,6 +626,16 @@ pub const Node = enum(c_int) {
         }
     };
 
+    test subnodeIterator {
+        const fdt = FDT.fromSlice(test_dtb);
+        const cpus_node = try fdt.findWithName(.all, "cpus");
+
+        var iter = cpus_node.?.subnodeIterator(fdt);
+        try std.testing.expectEqualStrings("cpu@0", try (try iter.next()).?.getName(fdt));
+        try std.testing.expectEqualStrings("cpu-map", try (try iter.next()).?.getName(fdt));
+        try customExpectEqual(try iter.next(), null);
+    }
+
     /// Get the next node after `node`.
     pub fn nextNode(node: Node, fdt: *const FDT) !?Node {
         const ret: ReturnValue = @enumFromInt(c.fdt_next_node(
@@ -469,6 +646,15 @@ pub const Node = enum(c_int) {
         return try ret.toOffset(Node);
     }
 
+    test nextNode {
+        const fdt = FDT.fromSlice(test_dtb);
+
+        const pmu_node = try fdt.findWithName(.all, "pmu");
+
+        const fw_cfg_node = try pmu_node.?.nextNode(fdt);
+        try std.testing.expectEqualStrings("fw-cfg@10100000", try fw_cfg_node.?.getName(fdt));
+    }
+
     /// Get the first property of `node`.
     pub fn firstProperty(node: Node, fdt: *const FDT) !?Property {
         const ret: ReturnValue = @enumFromInt(c.fdt_first_property_offset(
@@ -477,6 +663,18 @@ pub const Node = enum(c_int) {
         ));
         if (ret == .NotFound) return null;
         return try ret.toOffset(Property);
+    }
+
+    test firstProperty {
+        const fdt = FDT.fromSlice(test_dtb);
+
+        const chosen_node = try fdt.findWithName(.all, "chosen");
+
+        const stdout_path_property = try chosen_node.?.firstProperty(fdt);
+
+        const name, const value = try stdout_path_property.?.getValue(fdt);
+        try std.testing.expectEqualStrings("stdout-path", name);
+        try std.testing.expectEqualStrings("/soc/serial@10000000", value.toString());
     }
 
     /// Iterate over all properties of `node`.
@@ -513,6 +711,22 @@ pub const Node = enum(c_int) {
         }
     };
 
+    test propertyIterator {
+        const fdt = FDT.fromSlice(test_dtb);
+
+        const aliased_node = try fdt.findWithName(.all, "aliases");
+
+        var iter = aliased_node.?.propertyIterator(fdt);
+
+        const memory_prop_name, const memory_prop_value = try (try iter.next()).?.getValue(fdt);
+        try std.testing.expectEqualStrings("memory", memory_prop_name);
+        try std.testing.expectEqualStrings("/memory@80000000", memory_prop_value.toString());
+
+        const off_prop_name, const off_prop_value = try (try iter.next()).?.getValue(fdt);
+        try std.testing.expectEqualStrings("off", off_prop_name);
+        try std.testing.expectEqualStrings("/poweroff", off_prop_value.toString());
+    }
+
     /// Get the value of a property with a given name.
     pub fn getPropertyValueWithName(node: Node, fdt: *const FDT, property_name: []const u8) !?Property.Value {
         var ret: ReturnValue = undefined;
@@ -530,6 +744,14 @@ pub const Node = enum(c_int) {
         return .{ ._value = value_ptr.?[0..value_len] };
     }
 
+    test getPropertyValueWithName {
+        const fdt = FDT.fromSlice(test_dtb);
+        const serial_node = try fdt.findWithName(.all, "serial");
+
+        const value = try serial_node.?.getPropertyValueWithName(fdt, "compatible");
+        try std.testing.expectEqualStrings("ns16550a", value.?.toString());
+    }
+
     /// Retrieve the phandle of `node`.
     pub fn getPhandle(node: Node, fdt: *const FDT) ?PHandle {
         const phandle = c.fdt_get_phandle(
@@ -541,6 +763,14 @@ pub const Node = enum(c_int) {
             return null;
         }
         return @enumFromInt(phandle);
+    }
+
+    test getPhandle {
+        const fdt = FDT.fromSlice(test_dtb);
+
+        const test_node = try fdt.findWithName(.all, "test");
+
+        try customExpectEqual(test_node.?.getPhandle(fdt), @enumFromInt(0x4));
     }
 
     /// Retrieve the depth of a node.
@@ -556,6 +786,14 @@ pub const Node = enum(c_int) {
         return try ret.toValue();
     }
 
+    test depth {
+        const fdt = FDT.fromSlice(test_dtb);
+
+        const pci_node = try fdt.findWithName(.all, "pci");
+
+        try customExpectEqual(pci_node.?.depth(fdt), 2);
+    }
+
     /// Retrieve the parent of a node (that is, it finds the the node which contains `node` as a
     /// subnode).
     ///
@@ -568,6 +806,13 @@ pub const Node = enum(c_int) {
         ));
         if (ret == .NotFound) return null;
         return try ret.toOffset(Node);
+    }
+
+    test getParent {
+        const fdt = FDT.fromSlice(test_dtb);
+
+        const cpu0_node = try fdt.findWithName(.all, "cpus");
+        try customExpectEqual(cpu0_node.?.getParent(fdt), Node.root);
     }
 
     /// Retrieve the full path of `node`.
@@ -586,6 +831,16 @@ pub const Node = enum(c_int) {
         try ret.toError();
         const c_str: [*:0]const u8 = @ptrCast(buf.ptr);
         return std.mem.sliceTo(c_str, 0);
+    }
+
+    test path {
+        const fdt = FDT.fromSlice(test_dtb);
+
+        const virtio_mmio_node = try fdt.findWithName(.all, "virtio_mmio@10001000");
+
+        var buf: [256]u8 = undefined;
+        const p = try virtio_mmio_node.?.path(fdt, buf[0..]);
+        try std.testing.expectEqualStrings("/soc/virtio_mmio@10001000", p);
     }
 
     pub const CheckCompatibleResult = enum {
@@ -614,6 +869,32 @@ pub const Node = enum(c_int) {
         };
     }
 
+    test checkCompatible {
+        const fdt = FDT.fromSlice(test_dtb);
+
+        const platform_bus_node = try fdt.findWithName(.all, "platform-bus");
+
+        // match
+        try customExpectEqual(
+            platform_bus_node.?.checkCompatible(fdt, "simple-bus"),
+            .match,
+        );
+
+        // no match
+        try customExpectEqual(
+            platform_bus_node.?.checkCompatible(fdt, "ns16550a"),
+            .no_match,
+        );
+
+        const memory_node = try fdt.findWithName(.all, "memory");
+
+        // no compatible property
+        try customExpectEqual(
+            memory_node.?.checkCompatible(fdt, "syscon-reboot"),
+            .no_compatible_property,
+        );
+    }
+
     /// Retrieve address size for a bus represented in the tree.
     pub fn addressCells(self: Node, fdt: *const FDT) !usize {
         const ret: ReturnValue = @enumFromInt(c.fdt_address_cells(
@@ -623,6 +904,13 @@ pub const Node = enum(c_int) {
         return try ret.toValue();
     }
 
+    test addressCells {
+        const fdt = FDT.fromSlice(test_dtb);
+
+        const platform_bus_node = try fdt.findWithName(.all, "platform-bus");
+        try customExpectEqual(platform_bus_node.?.addressCells(fdt), 1);
+    }
+
     /// Retrieve address range size for a bus represented in the tree.
     pub fn sizeCells(self: Node, fdt: *const FDT) !usize {
         const ret: ReturnValue = @enumFromInt(c.fdt_size_cells(
@@ -630,6 +918,13 @@ pub const Node = enum(c_int) {
             @intFromEnum(self),
         ));
         return try ret.toValue();
+    }
+
+    test sizeCells {
+        const fdt = FDT.fromSlice(test_dtb);
+
+        const cpus_node = try fdt.findWithName(.all, "cpus");
+        try customExpectEqual(cpus_node.?.sizeCells(fdt), 0);
     }
 };
 
@@ -658,6 +953,18 @@ pub const Property = enum(c_int) {
         };
     }
 
+    test getValue {
+        const fdt = FDT.fromSlice(test_dtb);
+
+        const memory_node = try fdt.findWithName(.all, "memory");
+
+        const device_type_property = try memory_node.?.firstProperty(fdt);
+        const name, const value = try device_type_property.?.getValue(fdt);
+
+        try std.testing.expectEqualStrings("device_type", name);
+        try std.testing.expectEqualStrings("memory", value.toString());
+    }
+
     pub const Value = struct {
         /// The raw value of the property.
         ///
@@ -672,7 +979,13 @@ pub const Property = enum(c_int) {
             return self._value[0 .. self._value.len - 1 :0];
         }
 
-        pub fn stringListIterator(self: Value) StringListIterator {
+        test "Property.Value.fromString/toString" {
+            try std.testing.expectEqualStrings("foo", Value.fromString("foo").toString());
+            try std.testing.expectEqualStrings("", Value.fromString("").toString());
+            try std.testing.expectEqualStrings("✓", Value.fromString("✓").toString());
+        }
+
+        pub fn stringListIterator(self: Value) StringListIterator { // TODO: add test for stringListIterator
             return .{
                 .string_list = self._value,
             };
@@ -704,6 +1017,22 @@ pub const Property = enum(c_int) {
         if (ret == .NotFound) return null;
         return try ret.toOffset(Property);
     }
+
+    test nextProperty {
+        const fdt = FDT.fromSlice(test_dtb);
+
+        const aliases_node = try fdt.findWithName(.all, "aliases");
+
+        const memory_property = try aliases_node.?.firstProperty(fdt);
+        const memory_name, const memory_value = try memory_property.?.getValue(fdt);
+        try std.testing.expectEqualStrings("memory", memory_name);
+        try std.testing.expectEqualStrings("/memory@80000000", memory_value.toString());
+
+        const off_property = try memory_property.?.nextProperty(fdt);
+        const off_name, const off_value = try off_property.?.getValue(fdt);
+        try std.testing.expectEqualStrings("off", off_name);
+        try std.testing.expectEqualStrings("/poweroff", off_value.toString());
+    }
 };
 
 pub const PHandle = enum(u32) {
@@ -717,6 +1046,15 @@ pub const PHandle = enum(u32) {
         ));
         if (ret == .NotFound) return null;
         return try ret.toOffset(Node);
+    }
+
+    test find {
+        const fdt = FDT.fromSlice(test_dtb);
+
+        const handle: PHandle = @enumFromInt(0x1);
+
+        const cpu0_node = try handle.find(fdt);
+        try std.testing.expectEqualStrings("cpu@0", try cpu0_node.?.getName(fdt));
     }
 };
 
@@ -784,6 +1122,49 @@ pub const Error = error{
     BadFlags,
     /// The device tree base address is not 8-byte aligned.
     Alignment,
+};
+
+pub const MemoryReservation = struct {
+    address: u64,
+    size: u64,
+};
+
+pub const Header = struct {
+    /// magic word
+    magic: u32,
+
+    /// total size of DT block
+    totalsize: u32,
+
+    /// offset to structure
+    off_dt_struct: u32,
+
+    /// offset to strings
+    off_dt_strings: u32,
+
+    /// offset to memory reserve map
+    off_mem_rsvmap: u32,
+
+    /// format version
+    version: u32,
+
+    /// last compatible version
+    last_comp_version: u32,
+
+    /// Which physical CPU id we're booting on
+    ///
+    /// Available from version 2
+    boot_cpuid_phys: u32,
+
+    /// size of the strings block
+    ///
+    /// Available from version 3
+    size_dt_strings: u32,
+
+    /// size of the structure block
+    ///
+    /// Available from version 17
+    size_dt_struct: u32,
 };
 
 const ReturnValue = enum(c_int) {
@@ -891,9 +1272,26 @@ fn headerSize(version: u32) u32 {
 }
 
 const std = @import("std");
+const builtin = @import("builtin");
 const c = @cImport({
     @cInclude("libfdt.h");
 });
+
+const test_dtb: if (builtin.is_test)
+    []align(8) const u8
+else
+    void = if (builtin.is_test)
+test_dtb: {
+    const emded = @embedFile("test.dtb");
+    const buf: [emded.len]u8 align(8) = emded.*;
+    break :test_dtb &buf;
+} else {};
+
+/// A version of `std.testing.expectEqual` that flips the order of `expected` and `actual` to allow
+/// expected to not use `anytype`.
+pub inline fn customExpectEqual(actual: anytype, expected: @TypeOf(actual)) !void {
+    try std.testing.expectEqual(expected, actual);
+}
 
 comptime {
     std.testing.refAllDeclsRecursive(@This());
