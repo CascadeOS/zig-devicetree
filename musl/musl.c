@@ -70,12 +70,3 @@ char *strrchr(const char *s, int c)
 {
 	return __memrchr(s, c, strlen(s) + 1);
 }
-
-// https://git.musl-libc.org/cgit/musl/tree/src/string/strnlen.c
-// 6442eb793fbeeda51a3f19b9e1c1269a030444e9
-__attribute__((weak))
-size_t strnlen(const char *s, size_t n)
-{
-	const char *p = memchr(s, 0, n);
-	return p ? p-s : n;
-}

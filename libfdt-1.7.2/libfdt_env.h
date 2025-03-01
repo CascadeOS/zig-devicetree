@@ -22,7 +22,6 @@ extern void *memmove (void *__dest, const void *__src, size_t __n);
 extern int memcmp (const void *__s1, const void *__s2, size_t __n);
 extern void *memchr (const void *__s, int __c, size_t __n);
 extern char *strrchr (const char *__s, int __c);
-size_t strnlen (const char *__string, size_t __maxlen);
 #else
 #include <stdlib.h>
 #include <string.h>
