@@ -1,6 +1,6 @@
 # zig-devicetree
 
-Zig wrapper around libfdt.
+Zig wrapper around [libfdt](https://github.com/dgibson/dtc/tree/main/libfdt) providing a read only API for device trees.
 
 ## Installation
 

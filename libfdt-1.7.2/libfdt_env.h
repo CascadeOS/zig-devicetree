@@ -7,29 +7,26 @@
  * Copyright 2012 Kim Phillips, Freescale Semiconductor.
  */
 
-/*
- * This file is a slightly modified version of libfdt_env.h to make it freestanding compatible.
- *
- * Changes:
- *  - removed <stdlib.h> import
- *  - removed <string.h> import
- *  - declared strlen
- *  - declared memcpy
- *  - declared memmove
- *  - declared memcmp
- */
- 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-// #include <stdlib.h>
-// #include <string.h>
 #include <limits.h>
 
+/*
+ * This file is a slightly modified version of libfdt_env.h to make it freestanding compatible.
+ */
+#ifdef _USE_BUNDLED_MUSL_
 extern size_t strlen (const char *__s);
 extern void *memcpy (void *__restrict __dest, const void *__restrict __src,	size_t __n);
 extern void *memmove (void *__dest, const void *__src, size_t __n);
 extern int memcmp (const void *__s1, const void *__s2, size_t __n);
+extern void *memchr (const void *__s, int __c, size_t __n);
+extern char *strrchr (const char *__s, int __c);
+size_t strnlen (const char *__string, size_t __maxlen);
+#else
+#include <stdlib.h>
+#include <string.h>
+#endif
 
 #ifdef __CHECKER__
 #define FDT_FORCE __attribute__((force))
