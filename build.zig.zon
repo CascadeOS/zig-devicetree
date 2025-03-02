@@ -2,11 +2,11 @@
 // SPDX-FileCopyrightText: 2025 Lee Cannon <leecannon@leecannon.xyz>
 
 .{
-    .name = "devicetree",
+    .name = .devicetree,
 
     .version = "0.0.0",
 
-    .minimum_zig_version = "0.14.0-dev.3356+5e20e9b44",
+    .minimum_zig_version = "0.14.0-dev.3445+6c3cbb0c8",
 
     .paths = .{
         "build.zig",
@@ -16,4 +16,6 @@
         "musl",
         "libfdt-1.7.2",
     },
+
+    .fingerprint = 0x10ab9dbfac5c9471,
 }
