@@ -1289,7 +1289,7 @@ test_dtb: {
 
 /// A version of `std.testing.expectEqual` that flips the order of `expected` and `actual` to allow
 /// expected to not use `anytype`.
-pub inline fn customExpectEqual(actual: anytype, expected: @TypeOf(actual)) !void {
+inline fn customExpectEqual(actual: anytype, expected: @TypeOf(actual)) !void {
     try std.testing.expectEqual(expected, actual);
 }
 
