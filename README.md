@@ -1,6 +1,6 @@
 # zig-devicetree
 
-A read-only Flattened Device Tree (FDT) API.
+A read-only Flattened Device Tree (DTB) API.
 
 Supports versions 2 through 17.
 
