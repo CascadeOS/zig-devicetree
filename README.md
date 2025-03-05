@@ -1,6 +1,12 @@
 # zig-devicetree
 
-Zig wrapper around [libfdt](https://github.com/dgibson/dtc/tree/main/libfdt) providing a read only API for device trees.
+A read-only Flattened Device Tree (FDT) API.
+
+Supports versions 2 through 17.
+
+Compatible with [Devicetree Specification v0.4](https://github.com/devicetree-org/devicetree-specification/releases/tag/v0.4).
+
+This started as a wrapper around [libfdt](https://github.com/dgibson/dtc/tree/main/libfdt) but is now a fresh implementation.
 
 ## Installation
 
@@ -14,5 +20,5 @@ Then add the following to `build.zig`:
 
 ```zig
 const devicetree_dep = b.dependency("devicetree", .{});
-exe.root_module.addImport("devicetree", devicetree_dep.module("devicetree"));
+exe.root_module.addImport("DeviceTree", devicetree_dep.module("DeviceTree"));
 ```

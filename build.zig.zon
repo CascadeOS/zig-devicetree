@@ -4,17 +4,19 @@
 .{
     .name = .devicetree,
 
-    .version = "0.0.0",
+    .version = "1.0.0",
 
-    .minimum_zig_version = "0.14.0-dev.3445+6c3cbb0c8",
+    .minimum_zig_version = "0.14.0",
 
     .paths = .{
+        "LICENSE",
+        "LICENSES",
+        "REUSE.toml",
+
         "build.zig",
         "build.zig.zon",
-        "LICENSE",
-        "src/devicetree.zig",
-        "musl",
-        "libfdt-1.7.2",
+
+        "src/DeviceTree.zig",
     },
 
     .fingerprint = 0x10ab9dbfac5c9471,

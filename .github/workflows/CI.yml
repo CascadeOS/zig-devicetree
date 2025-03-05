@@ -22,10 +22,6 @@ on:
 
 jobs:
   CI:
-    strategy:
-      matrix:
-        use_bundled_musl: [true, false]
-
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,4 +33,4 @@ jobs:
         run: zig fmt --check --ast-check .
 
       - name: Test
-        run: zig build test -Duse_bundled_musl=${{ matrix.use_bundled_musl }} --summary all
+        run: zig build test --summary all
