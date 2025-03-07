@@ -1,10 +1,10 @@
 # zig-devicetree
 
-A read-only Flattened Device Tree (DTB) API.
-
-Supports versions 2 through 17.
+A read-only Flattened Devicetree (DTB) API.
 
 Compatible with [Devicetree Specification v0.4](https://github.com/devicetree-org/devicetree-specification/releases/tag/v0.4).
+
+[Auto-generated docs](https://cascadeos.github.io/zig-devicetree/)
 
 This started as a wrapper around [libfdt](https://github.com/dgibson/dtc/tree/main/libfdt) but is now a fresh implementation.
 
