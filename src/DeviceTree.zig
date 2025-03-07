@@ -14,24 +14,24 @@ fdt: []align(8) const u8,
 
 version: Version,
 
-/// The offset of the structure block.
+/// The offset of the structure block from the beginning of `fdt`.
 structure_block_offset: u32,
 
-/// The offset of the strings block.
+/// The limit of any offsets into the structure block.
+///
+/// This may or may not be the actual size of the structure block.
+structure_block_offset_limit: u32,
+
+/// The offset of the strings block from the beginning of `fdt`.
 strings_block_offset: u32,
+
+/// The limit of any offsets into the strings block.
+///
+/// This may or may not be the actual size of the strings block.
+strings_block_offset_limit: u32,
 
 /// The offset of the memory reservation block.
 memory_reservation_block_offset: u32,
-
-/// The size of the strings block in bytes.
-///
-/// Available from version 3.
-strings_block_size: ?u32,
-
-/// The size of the structure block in bytes.
-///
-/// Available from version 17.
-structure_block_size: ?u32,
 
 pub const FromSliceError = error{
     /// The slice is too small to contain a valid DeviceTree of any version.
@@ -61,10 +61,10 @@ test fromSlice {
     const fdt = try fromSlice(test_dtb);
     try customExpectEqual(fdt.version, .v17);
     try customExpectEqual(fdt.structure_block_offset, 88);
+    try customExpectEqual(fdt.structure_block_offset_limit, 5076);
     try customExpectEqual(fdt.strings_block_offset, 5164);
+    try customExpectEqual(fdt.strings_block_offset_limit, 503);
     try customExpectEqual(fdt.memory_reservation_block_offset, 40);
-    try customExpectEqual(fdt.strings_block_size, 503);
-    try customExpectEqual(fdt.structure_block_size, 5076);
 }
 
 pub const FromPtrError = error{
@@ -184,10 +184,16 @@ pub fn fromPtr(ptr: [*]align(8) const u8) FromPtrError!DeviceTree {
         .fdt = ptr[0..total_size],
         .version = version,
         .structure_block_offset = structure_block_offset,
+        .structure_block_offset_limit = if (structure_block_size) |size|
+            size
+        else
+            @intCast(total_size - structure_block_offset),
         .strings_block_offset = strings_block_offset,
+        .strings_block_offset_limit = if (strings_block_size) |size|
+            size
+        else
+            @intCast(total_size - strings_block_offset),
         .memory_reservation_block_offset = memory_reservation_block_offset,
-        .strings_block_size = strings_block_size,
-        .structure_block_size = structure_block_size,
     };
 }
 
@@ -195,10 +201,10 @@ test fromPtr {
     const dt = try fromPtr(test_dtb.ptr);
     try customExpectEqual(dt.version, .v17);
     try customExpectEqual(dt.structure_block_offset, 88);
+    try customExpectEqual(dt.structure_block_offset_limit, 5076);
     try customExpectEqual(dt.strings_block_offset, 5164);
+    try customExpectEqual(dt.strings_block_offset_limit, 503);
     try customExpectEqual(dt.memory_reservation_block_offset, 40);
-    try customExpectEqual(dt.strings_block_size, 503);
-    try customExpectEqual(dt.structure_block_size, 5076);
 }
 
 /// Get the physical CPU ID of the system's boot CPU.
@@ -219,35 +225,13 @@ test bootCpuid {
 }
 
 /// Iterate over all memory reservations in a device tree.
-pub fn memoryReservationIterator(dt: DeviceTree) MemoryReservationIterator {
+pub fn memoryReservationIterator(dt: DeviceTree) MemoryReservation.Iterator {
     return .{
         .fdt_ptr = dt.fdt.ptr,
-        .total_size = @intCast(dt.fdt.len),
+        .offset_limit = @intCast(dt.fdt.len - dt.memory_reservation_block_offset),
         .offset = dt.memory_reservation_block_offset,
     };
 }
-
-/// An iterator over memory reservations in a device tree.
-pub const MemoryReservationIterator = struct {
-    fdt_ptr: [*]align(8) const u8,
-    total_size: u32,
-    offset: u32,
-
-    /// Get the next memory reservation.
-    pub fn next(self: *MemoryReservationIterator) IteratorNextError!?MemoryReservation {
-        if (self.offset + @sizeOf(MemoryReservation.Raw) > self.total_size) {
-            @branchHint(.cold);
-            return IteratorNextError.Truncated;
-        }
-        const reservation: MemoryReservation = .read(@alignCast(self.fdt_ptr[self.offset..]));
-        if (reservation.address == 0 and reservation.size == 0) {
-            @branchHint(.unlikely);
-            return null;
-        }
-        self.offset += @sizeOf(MemoryReservation.Raw);
-        return reservation;
-    }
-};
 
 test memoryReservationIterator {
     const dt: DeviceTree = try .fromSlice(test_dtb);
@@ -271,6 +255,28 @@ pub const MemoryReservation = struct {
     /// The size of the reservation in bytes.
     size: u64,
 
+    /// An iterator over memory reservations in a device tree.
+    pub const Iterator = struct {
+        fdt_ptr: [*]align(8) const u8,
+        offset_limit: u32,
+        offset: u32,
+
+        /// Get the next memory reservation.
+        pub fn next(self: *Iterator) IteratorError!?MemoryReservation {
+            if (self.offset + @sizeOf(MemoryReservation.Raw) > self.offset_limit) {
+                @branchHint(.cold);
+                return IteratorError.Truncated;
+            }
+            const reservation: MemoryReservation = .read(@alignCast(self.fdt_ptr[self.offset..]));
+            if (reservation.address == 0 and reservation.size == 0) {
+                @branchHint(.unlikely);
+                return null;
+            }
+            self.offset += @sizeOf(MemoryReservation.Raw);
+            return reservation;
+        }
+    };
+
     fn read(ptr: [*]align(8) const u8) MemoryReservation {
         const raw: *const Raw = @ptrCast(ptr);
         return .{
@@ -289,13 +295,17 @@ pub const MemoryReservation = struct {
 ///
 /// That is, the value of the property named `alias` in the node '/aliases'.
 pub fn getAlias(dt: DeviceTree, alias: []const u8) IteratorError!?[]const u8 {
-    const alias_node = (try Node.root.findSubnode(
-        dt,
-        .direct_children,
-        .{ .name = "aliases" },
-    )) orelse return null;
+    const alias_node = blk: {
+        var iter = try Node.root.iterateSubnodes(
+            dt,
+            .direct_children,
+            .{ .name = "aliases" },
+        );
+        break :blk (try iter.next()) orelse return null;
+    };
 
-    if (try alias_node.node.findProperty(dt, .{ .name = alias })) |prop| {
+    var iter = try alias_node.node.propertyIterator(dt, .{ .name = alias });
+    if (try iter.next()) |prop| {
         return prop.value.toString();
     }
 
@@ -308,62 +318,74 @@ test getAlias {
     try std.testing.expectEqualStrings("/poweroff", path.?);
 }
 
-/// Iterate over all nodes in a device tree.
-pub fn iterateNodes(dt: DeviceTree) IteratorError!Node.Iterator {
+/// Iterate over all nodes in a device tree that match `match`.
+///
+/// See `Node.Match` for more information on the different matching types.
+pub fn nodeIterator(dt: DeviceTree, match: Node.Match) Node.Iterator {
     return .{
-        .tag_iterator = try dt.tagIterator(@intFromEnum(Node.root)),
+        .dt = dt,
+        .tag_iterator = dt.tagIterator(@intFromEnum(Node.root)),
         .iteration_type = .all,
+        .match = match,
+        .match_name_no_address = switch (match) {
+            .name => |name| std.mem.indexOfScalar(u8, name, '@') == null,
+            else => false,
+        },
     };
 }
 
-test iterateNodes {
+test nodeIterator {
     const dt: DeviceTree = try .fromSlice(test_dtb);
 
-    var iter = try dt.iterateNodes();
+    // any
+    {
+        var iter = dt.nodeIterator(.any);
 
-    var number_of_nodes: usize = 0;
+        var number_of_nodes: usize = 0;
 
-    while (try iter.next()) |_| {
-        number_of_nodes += 1;
+        while (try iter.next()) |_| {
+            number_of_nodes += 1;
+        }
+
+        try customExpectEqual(number_of_nodes, 31);
     }
 
-    try customExpectEqual(number_of_nodes, 31);
-}
-
-/// Find a matching node.
-///
-/// See `NodeMatch` for more information on the different matching types.
-pub fn findNode(
-    dt: DeviceTree,
-    match: NodeMatch,
-) IteratorError!?Node.WithName {
-    var node_iter = try dt.iterateNodes();
-    return try dt.findNodeInner(&node_iter, match);
-}
-
-test findNode {
-    const dt: DeviceTree = try .fromSlice(test_dtb);
-
     // by name - with address
-    const plic_node = try dt.findNode(.{ .name = "plic@c000000" });
-    try std.testing.expectEqualStrings("plic@c000000", plic_node.?.name);
+    {
+        var iter = dt.nodeIterator(.{ .name = "plic@c000000" });
+
+        const plic_node = try iter.next();
+        try std.testing.expectEqualStrings("plic@c000000", plic_node.?.name);
+    }
 
     // by name - without address
-    const pci_node = try dt.findNode(.{ .name = "pci" });
-    try std.testing.expectEqualStrings("pci@30000000", pci_node.?.name);
+    {
+        var iter = dt.nodeIterator(.{ .name = "pci" });
+
+        const pci_node = try iter.next();
+        try std.testing.expectEqualStrings("pci@30000000", pci_node.?.name);
+    }
 
     // by property name
-    const serial_node = try dt.findNode(.{ .property_name = "clock-frequency" });
-    try std.testing.expectEqualStrings("serial@10000000", serial_node.?.name);
+    {
+        var iter = dt.nodeIterator(.{ .property_name = "clock-frequency" });
+
+        const serial_node = try iter.next();
+        try std.testing.expectEqualStrings("serial@10000000", serial_node.?.name);
+    }
 
     // by property value
-    const cpu0_node = try dt.findNode(.{
-        .property_value = .{
-            .name = "mmu-type",
-            .value = .fromString("riscv,sv57"),
-        },
-    });
-    try std.testing.expectEqualStrings("cpu@0", cpu0_node.?.name);
+    {
+        var iter = dt.nodeIterator(.{
+            .property_value = .{
+                .name = "mmu-type",
+                .value = .fromString("riscv,sv57"),
+            },
+        });
+
+        const cpu0_node = try iter.next();
+        try std.testing.expectEqualStrings("cpu@0", cpu0_node.?.name);
+    }
 }
 
 /// Find a node with a compatible property which lists the given `compatible` string.
@@ -371,7 +393,7 @@ pub fn findNodeWithCompatible(
     dt: DeviceTree,
     compatible: []const u8,
 ) Node.CheckCompatibleError!?Node.WithName {
-    var node_iter = try dt.iterateNodes();
+    var node_iter = dt.nodeIterator(.{ .property_name = "compatible" });
 
     while (try node_iter.next()) |node_with_name| {
         if (try node_with_name.node.checkCompatible(dt, compatible)) {
@@ -458,9 +480,10 @@ pub fn nodeFromPath(dt: DeviceTree, path: []const u8) NodeFromPathError!?Node.Wi
             return error.BadPath;
         }
 
-        current_node = (try current_node.node.findSubnode(dt, .direct_children, .{
+        var iter = try current_node.node.iterateSubnodes(dt, .direct_children, .{
             .name = component,
-        })) orelse return null;
+        });
+        current_node = (try iter.next()) orelse return null;
     }
 
     return current_node;
@@ -495,15 +518,18 @@ pub const Node = enum(u32) {
     root = 0,
     _,
 
-    /// Iterate the subnodes of `parent`.
+    /// Iterate the subnodes of `parent` that match `match`.
     ///
     /// See `SubnodeIterationType` for information on the different iteration types.
+    ///
+    /// See `Node.Match` for more information on the different matching types.
     pub fn iterateSubnodes(
         parent_node: Node,
         dt: DeviceTree,
         iteration_type: SubnodeIterationType,
+        match: Match,
     ) IteratorError!Iterator {
-        var tag_iterator = try dt.tagIterator(@intFromEnum(parent_node));
+        var tag_iterator = dt.tagIterator(@intFromEnum(parent_node));
 
         // move past `parent_node`
         var value: Tag.Value = undefined;
@@ -515,10 +541,16 @@ pub const Node = enum(u32) {
         }
 
         return .{
+            .dt = dt,
             .tag_iterator = tag_iterator,
             .iteration_type = switch (iteration_type) {
                 .direct_children => .direct_children,
                 .all_children => .all_children,
+            },
+            .match = match,
+            .match_name_no_address = switch (match) {
+                .name => |name| std.mem.indexOfScalar(u8, name, '@') == null,
+                else => false,
             },
         };
     }
@@ -534,11 +566,12 @@ pub const Node = enum(u32) {
     test iterateSubnodes {
         const dt: DeviceTree = try .fromSlice(test_dtb);
 
-        // direct children
+        // any - direct children
         {
             var iter = try Node.root.iterateSubnodes(
                 dt,
                 .direct_children,
+                .any,
             );
 
             var number_of_nodes: usize = 0;
@@ -550,11 +583,12 @@ pub const Node = enum(u32) {
             try customExpectEqual(number_of_nodes, 11);
         }
 
-        // all children
+        // any - all children
         {
             var iter = try Node.root.iterateSubnodes(
                 dt,
                 .all_children,
+                .any,
             );
 
             var number_of_nodes: usize = 0;
@@ -565,61 +599,149 @@ pub const Node = enum(u32) {
 
             try customExpectEqual(number_of_nodes, 30);
         }
-    }
 
-    /// Find a matching subnode of `parent_node`.
-    ///
-    /// See `SubnodeIterationType` for more information on the different iteration types.
-    ///
-    /// See `NodeMatch` for more information on the different matching types.
-    pub fn findSubnode(
-        parent_node: Node,
-        dt: DeviceTree,
-        iteration_type: SubnodeIterationType,
-        match: NodeMatch,
-    ) IteratorError!?Node.WithName {
-        var node_iter = try parent_node.iterateSubnodes(dt, iteration_type);
-        return try dt.findNodeInner(&node_iter, match);
-    }
-
-    test findSubnode {
-        const dt: DeviceTree = try .fromSlice(test_dtb);
+        const soc_node = blk: {
+            var iter = dt.nodeIterator(.{ .name = "soc" });
+            break :blk (try iter.next()).?.node;
+        };
 
         // by name - with address
-        const plic_node = try Node.root.findSubnode(dt, .all_children, .{
-            .name = "plic@c000000",
-        });
-        try std.testing.expectEqualStrings("plic@c000000", plic_node.?.name);
+        {
+            var iter = try soc_node.iterateSubnodes(dt, .all_children, .{
+                .name = "plic@c000000",
+            });
+
+            const plic_node = try iter.next();
+            try std.testing.expectEqualStrings("plic@c000000", plic_node.?.name);
+        }
 
         // by name - without address
-        const pci_node = try Node.root.findSubnode(dt, .all_children, .{
-            .name = "pci",
-        });
-        try std.testing.expectEqualStrings("pci@30000000", pci_node.?.name);
+        {
+            var iter = try soc_node.iterateSubnodes(dt, .all_children, .{
+                .name = "test",
+            });
+
+            const test_node = try iter.next();
+            try std.testing.expectEqualStrings("test@100000", test_node.?.name);
+        }
 
         // by property name
-        const serial_node = try Node.root.findSubnode(dt, .all_children, .{
-            .property_name = "clock-frequency",
-        });
-        try std.testing.expectEqualStrings("serial@10000000", serial_node.?.name);
+        {
+            var iter = try soc_node.iterateSubnodes(dt, .all_children, .{
+                .property_name = "interrupt-controller",
+            });
+
+            const plic_node = try iter.next();
+            try std.testing.expectEqualStrings("plic@c000000", plic_node.?.name);
+        }
 
         // by property value
-        const cpu0_node = try Node.root.findSubnode(dt, .all_children, .{
-            .property_value = .{
-                .name = "mmu-type",
-                .value = .fromString("riscv,sv57"),
-            },
-        });
-        try std.testing.expectEqualStrings("cpu@0", cpu0_node.?.name);
+        {
+            var iter = try Node.root.iterateSubnodes(dt, .all_children, .{
+                .property_value = .{
+                    .name = "mmu-type",
+                    .value = .fromString("riscv,sv57"),
+                },
+            });
+
+            const cpu0_node = try iter.next();
+            try std.testing.expectEqualStrings("cpu@0", cpu0_node.?.name);
+        }
+    }
+
+    /// Iterate over the properties of a node that match `match`.
+    ///
+    /// See `Property.Match` for more information on the different matching types.
+    pub fn propertyIterator(node: Node, dt: DeviceTree, match: Property.Match) IteratorError!Property.Iterator {
+        var tag_iterator = dt.tagIterator(@intFromEnum(node));
+
+        const match_prop_name: []const u8 = switch (match) {
+            .any => undefined,
+            .name => |name| name,
+            .value => |prop| prop.name,
+        };
+
+        // move past `node`
+        var value: Tag.Value = undefined;
+        if (try tag_iterator.next(&value)) |tuple| {
+            if (tuple.tag != .begin_node) {
+                @branchHint(.cold);
+                return error.BadOffset;
+            }
+        }
+
+        return .{
+            .tag_iterator = tag_iterator,
+            .strings_block = dt.fdt.ptr + dt.strings_block_offset,
+            .offset_limit = dt.strings_block_offset_limit,
+
+            .match = match,
+            .match_prop_name = match_prop_name,
+        };
+    }
+
+    test propertyIterator {
+        const dt: DeviceTree = try .fromSlice(test_dtb);
+
+        // any
+        {
+            var iter = try Node.root.propertyIterator(dt, .any);
+
+            try std.testing.expectEqualStrings("#address-cells", (try iter.next()).?.name);
+            try std.testing.expectEqualStrings("#size-cells", (try iter.next()).?.name);
+            try std.testing.expectEqualStrings("compatible", (try iter.next()).?.name);
+            try std.testing.expectEqualStrings("model", (try iter.next()).?.name);
+            try customExpectEqual(try iter.next(), null);
+        }
+
+        // by name - found
+        {
+            var iter = try Node.root.propertyIterator(dt, .{ .name = "#address-cells" });
+            const address_cells_property = try iter.next();
+            try customExpectEqual(address_cells_property.?.value.toU32(), 0x02);
+        }
+
+        // by name - not found
+        {
+            var iter = try Node.root.propertyIterator(dt, .{ .name = "not-found" });
+            const not_found_name_property = try iter.next();
+            try customExpectEqual(not_found_name_property, null);
+        }
+
+        // by value - found
+        {
+            var iter = try Node.root.propertyIterator(dt, .{
+                .value = .{
+                    .name = "compatible",
+                    .value = .fromString("riscv-virtio"),
+                },
+            });
+            const compatible_property = try iter.next();
+
+            try std.testing.expectEqualStrings("riscv-virtio", compatible_property.?.value.toString());
+        }
+
+        // by value - not match
+        {
+            var iter = try Node.root.propertyIterator(dt, .{
+                .value = .{
+                    .name = "compatible",
+                    .value = .fromString("blah"),
+                },
+            });
+            const compatible_not_match_property = try iter.next();
+            try customExpectEqual(compatible_not_match_property, null);
+        }
     }
 
     pub const CheckCompatibleError = IteratorError || Property.Value.StringListIterator.Error;
 
     /// Check if a node has a compatible property which lists the given `compatible` string.
     pub fn checkCompatible(node: Node, dt: DeviceTree, compatible: []const u8) CheckCompatibleError!bool {
-        const compatible_property = (try node.findProperty(dt, .{
-            .name = "compatible",
-        })) orelse return false;
+        const compatible_property = blk: {
+            var iter = try node.propertyIterator(dt, .{ .name = "compatible" });
+            break :blk (try iter.next()) orelse return false;
+        };
 
         var string_list_iter = compatible_property.value.stringListIterator();
         while (try string_list_iter.next()) |string| {
@@ -632,7 +754,10 @@ pub const Node = enum(u32) {
     test checkCompatible {
         const dt: DeviceTree = try .fromSlice(test_dtb);
 
-        const platform_bus_node = (try dt.findNode(.{ .name = "platform-bus" })).?.node;
+        const platform_bus_node = blk: {
+            var iter = dt.nodeIterator(.{ .name = "platform-bus" });
+            break :blk (try iter.next()).?.node;
+        };
 
         // match
         try std.testing.expect(try platform_bus_node.checkCompatible(dt, "simple-bus"));
@@ -650,10 +775,14 @@ pub const Node = enum(u32) {
         iteration_type: SubnodeIterationType,
         compatible: []const u8,
     ) CheckCompatibleError!?Node.WithName {
-        var node_iter = try parent_node.iterateSubnodes(dt, iteration_type);
+        var node_iter = try parent_node.iterateSubnodes(
+            dt,
+            iteration_type,
+            .{ .property_name = "compatible" },
+        );
 
         while (try node_iter.next()) |node_with_name| {
-            if (try checkCompatible(node_with_name.node, dt, compatible)) {
+            if (try node_with_name.node.checkCompatible(dt, compatible)) {
                 return node_with_name;
             }
         }
@@ -671,72 +800,10 @@ pub const Node = enum(u32) {
         try std.testing.expectEqualStrings("poweroff", node.?.name);
     }
 
-    /// Find a property of a node.
-    ///
-    /// See `PropertyMatch` for more information on the different matching types.
-    pub fn findProperty(node: Node, dt: DeviceTree, match: PropertyMatch) IteratorError!?Property {
-        var prop_iter = try node.propertyIterator(dt);
-
-        const name: []const u8 = switch (match) {
-            .name => |name| name,
-            .value => |prop| prop.name,
-        };
-
-        while (try prop_iter.next()) |actual_prop| {
-            if (!std.mem.eql(u8, actual_prop.name, name)) continue;
-
-            switch (match) {
-                .name => return actual_prop,
-                .value => |match_prop| return if (std.mem.eql(
-                    u8,
-                    actual_prop.value._raw,
-                    match_prop.value._raw,
-                ))
-                    actual_prop
-                else
-                    null,
-            }
-        }
-
-        return null;
-    }
-
-    test findProperty {
-        const dt: DeviceTree = try .fromSlice(test_dtb);
-
-        // by name - found
-        const address_cells_property = try Node.root.findProperty(dt, .{ .name = "#address-cells" });
-        try customExpectEqual(address_cells_property.?.value.toU32(), 0x02);
-
-        // by name - not found
-        const not_found_name_property = try Node.root.findProperty(dt, .{ .name = "not-found" });
-        try customExpectEqual(not_found_name_property, null);
-
-        // by value - found
-        const compatible_property = try Node.root.findProperty(dt, .{
-            .value = .{
-                .name = "compatible",
-                .value = .fromString("riscv-virtio"),
-            },
-        });
-        try std.testing.expectEqualStrings("riscv-virtio", compatible_property.?.value.toString());
-
-        // by value - not match
-        const compatible_not_match_property = try Node.root.findProperty(dt, .{
-            .value = .{
-                .name = "compatible",
-                .value = .fromString("blah"),
-            },
-        });
-        try customExpectEqual(compatible_not_match_property, null);
-    }
-
     /// Fetch the `#address-cells` property of a node if it exists.
     pub fn addressCells(node: Node, dt: DeviceTree) IteratorError!?u32 {
-        return if (try node.findProperty(dt, .{ .name = "#address-cells" })) |prop|
-            prop.value.toU32()
-        else
-            null;
+        var iter = try node.propertyIterator(dt, .{ .name = "#address-cells" });
+        return if (try iter.next()) |prop| prop.value.toU32() else null;
     }
 
     test addressCells {
@@ -750,10 +817,8 @@ pub const Node = enum(u32) {
 
     /// Fetch the `#size-cells` property of a node if it exists.
     pub fn sizeCells(node: Node, dt: DeviceTree) IteratorError!?u32 {
-        return if (try node.findProperty(dt, .{ .name = "#size-cells" })) |prop|
-            prop.value.toU32()
-        else
-            null;
+        var iter = try node.propertyIterator(dt, .{ .name = "#size-cells" });
+        return if (try iter.next()) |prop| prop.value.toU32() else null;
     }
 
     test sizeCells {
@@ -769,19 +834,22 @@ pub const Node = enum(u32) {
     ///
     /// Checks for both `phandle` and `linux,phandle` properties.
     pub fn pHandle(node: Node, dt: DeviceTree) IteratorError!?PHandle {
-        if (try node.findProperty(dt, .{ .name = "phandle" })) |prop|
-            return prop.value.toPHandle();
+        var iter = try node.propertyIterator(dt, .{ .name = "phandle" });
+        if (try iter.next()) |prop| return prop.value.toPHandle();
 
-        return if (try node.findProperty(dt, .{ .name = "linux,phandle" })) |prop|
-            prop.value.toPHandle()
-        else
-            null;
+        iter = try node.propertyIterator(dt, .{ .name = "linux,phandle" });
+        if (try iter.next()) |prop| return prop.value.toPHandle();
+
+        return null;
     }
 
     test pHandle {
         const dt: DeviceTree = try .fromSlice(test_dtb);
 
-        const plic_node = try dt.findNode(.{ .name = "plic@c000000" });
+        const plic_node = blk: {
+            var iter = dt.nodeIterator(.{ .name = "plic@c000000" });
+            break :blk (try iter.next());
+        };
         try std.testing.expectEqualStrings("plic@c000000", plic_node.?.name);
 
         try customExpectEqual(plic_node.?.node.pHandle(dt), @enumFromInt(0x03));
@@ -793,7 +861,7 @@ pub const Node = enum(u32) {
     ///
     /// NOTE: This function is expensive, as it must scan the devicetree from the start to the `node`.
     pub fn depth(node: Node, dt: DeviceTree) IteratorError!usize {
-        var tag_iterator = try dt.tagIterator(@intFromEnum(Node.root));
+        var tag_iterator = dt.tagIterator(@intFromEnum(Node.root));
 
         var value: Tag.Value = undefined; // this value is not used
         var current_depth: usize = 0;
@@ -826,8 +894,10 @@ pub const Node = enum(u32) {
 
         try customExpectEqual(try Node.root.depth(dt), 0);
 
-        const pci_node = (try dt.findNode(.{ .name = "pci" })).?.node;
-
+        const pci_node = blk: {
+            var iter = dt.nodeIterator(.{ .name = "pci" });
+            break :blk (try iter.next()).?.node;
+        };
         try customExpectEqual(try pci_node.depth(dt), 2);
     }
 
@@ -843,7 +913,7 @@ pub const Node = enum(u32) {
         if (own_depth == 0) return null;
         const parent_depth = own_depth - 1;
 
-        var tag_iterator = try dt.tagIterator(@intFromEnum(Node.root));
+        var tag_iterator = dt.tagIterator(@intFromEnum(Node.root));
 
         var value: Tag.Value = undefined;
         var current_depth: usize = 0;
@@ -886,13 +956,19 @@ pub const Node = enum(u32) {
 
         try customExpectEqual(try Node.root.parent(dt), null);
 
-        const soc_node = (try dt.findNode(.{ .name = "soc" })).?.node;
+        const soc_node = blk: {
+            var iter = dt.nodeIterator(.{ .name = "soc" });
+            break :blk (try iter.next()).?.node;
+        };
         const soc_parent = try soc_node.parent(dt);
         try customExpectEqual(soc_parent.?.node, Node.root);
 
-        const clint_node = (try soc_node.findSubnode(dt, .direct_children, .{
-            .name = "clint",
-        })).?.node;
+        const clint_node = blk: {
+            var iter = try soc_node.iterateSubnodes(dt, .direct_children, .{
+                .name = "clint",
+            });
+            break :blk (try iter.next()).?.node;
+        };
         const clint_parent = try clint_node.parent(dt);
         try customExpectEqual(clint_parent.?.node, soc_node);
     }
@@ -918,7 +994,7 @@ pub const Node = enum(u32) {
             return full_path.items;
         }
 
-        var tag_iterator = try dt.tagIterator(@intFromEnum(Node.root));
+        var tag_iterator = dt.tagIterator(@intFromEnum(Node.root));
 
         // move past `root`
         if (try tag_iterator.next(&value)) |tuple| {
@@ -968,44 +1044,12 @@ pub const Node = enum(u32) {
         const root_path = try Node.root.path(dt, buf[0..]);
         try std.testing.expectEqualStrings("/", root_path);
 
-        const virtio_mmio_node = try dt.findNode(.{ .name = "virtio_mmio@10001000" });
-        const virtio_mmio_path = try virtio_mmio_node.?.node.path(dt, buf[0..]);
-        try std.testing.expectEqualStrings("/soc/virtio_mmio@10001000", virtio_mmio_path);
-    }
-
-    /// Iterate over the properties of a node.
-    pub fn propertyIterator(node: Node, dt: DeviceTree) IteratorError!Property.Iterator {
-        var tag_iterator = try dt.tagIterator(@intFromEnum(node));
-
-        // move past `node`
-        var value: Tag.Value = undefined;
-        if (try tag_iterator.next(&value)) |tuple| {
-            if (tuple.tag != .begin_node) {
-                @branchHint(.cold);
-                return error.BadOffset;
-            }
-        }
-
-        return .{
-            .tag_iterator = tag_iterator,
-            .strings_block = dt.fdt.ptr + dt.strings_block_offset,
-            .offset_limit = if (dt.strings_block_size) |size|
-                size
-            else
-                @intCast(dt.fdt.len - dt.strings_block_offset),
+        const virtio_mmio_node = blk: {
+            var iter = dt.nodeIterator(.{ .name = "virtio_mmio@10001000" });
+            break :blk (try iter.next()).?.node;
         };
-    }
-
-    test propertyIterator {
-        const dt: DeviceTree = try .fromSlice(test_dtb);
-
-        var iter = try Node.root.propertyIterator(dt);
-
-        try std.testing.expectEqualStrings("#address-cells", (try iter.next()).?.name);
-        try std.testing.expectEqualStrings("#size-cells", (try iter.next()).?.name);
-        try std.testing.expectEqualStrings("compatible", (try iter.next()).?.name);
-        try std.testing.expectEqualStrings("model", (try iter.next()).?.name);
-        try customExpectEqual(try iter.next(), null);
+        const virtio_mmio_path = try virtio_mmio_node.path(dt, buf[0..]);
+        try std.testing.expectEqualStrings("/soc/virtio_mmio@10001000", virtio_mmio_path);
     }
 
     pub const WithName = struct {
@@ -1015,16 +1059,27 @@ pub const Node = enum(u32) {
 
     /// An iterator over nodes in a device tree.
     pub const Iterator = struct {
-        tag_iterator: TagIterator,
-        iteration_type: NodeIterationType,
+        dt: DeviceTree,
 
-        /// Tracks the relative depth of the current node relative to the target node.
+        tag_iterator: Tag.Iterator,
+        iteration_type: IterationType,
+        match: Match,
+
+        /// Used only when `match` is `.name`.
         ///
-        /// Only used when `iteration_type` is `.direct_children` or `.all_children`.
+        /// If `true`, the match name does not include the address specifier.
+        match_name_no_address: bool,
+
+        /// Tracks the relative depth of the current node relative to the parent node.
+        ///
+        /// The value is only used when `iteration_type` is `.direct_children` or `.all_children` but is unconditionally
+        /// incremented and decremented.
         relative_depth: i32 = 0,
 
         /// Get the next node.
-        pub fn next(self: *Iterator) IteratorNextError!?Node.WithName {
+        pub fn next(self: *Iterator) IteratorError!?Node.WithName {
+            // used only when `match` is `.name`
+
             var value: Tag.Value = undefined;
             while (try self.tag_iterator.next(&value)) |tuple| {
                 switch (tuple.tag) {
@@ -1035,10 +1090,14 @@ pub const Node = enum(u32) {
                             continue;
                         }
 
-                        return .{
+                        const node_with_name: WithName = .{
                             .name = value.begin_node,
                             .node = @enumFromInt(tuple.offset),
                         };
+
+                        if (try self.match.isMatch(self.dt, node_with_name, self.match_name_no_address)) {
+                            return node_with_name;
+                        }
                     },
                     .end_node => {
                         if (self.iteration_type != .all) {
@@ -1058,11 +1117,62 @@ pub const Node = enum(u32) {
             return null;
         }
 
-        const NodeIterationType = enum {
+        const IterationType = enum {
             all,
             direct_children,
             all_children,
         };
+    };
+
+    pub const Match = union(enum) {
+        /// Match any node.
+        any,
+
+        /// Match a node by name.
+        name: []const u8,
+
+        /// Match a node by property name.
+        property_name: []const u8,
+
+        /// Match a node by property name and value.
+        property_value: Property,
+
+        inline fn isMatch(match: Match, dt: DeviceTree, node_with_name: Node.WithName, match_name_no_address: bool) !bool {
+            switch (match) {
+                .any => return true,
+                .name => |match_name| {
+                    const name = node_with_name.name;
+
+                    if (name.len < match_name.len)
+                        return false;
+
+                    if (!std.mem.eql(u8, name[0..match_name.len], match_name))
+                        return false;
+
+                    if (name[match_name.len] == 0)
+                        return true;
+
+                    if (match_name_no_address and name[match_name.len] == '@')
+                        return true;
+                },
+                .property_name => |property_name| {
+                    var iter = try node_with_name.node.propertyIterator(
+                        dt,
+                        .{ .name = property_name },
+                    );
+                    if (try iter.next()) |_| return true;
+                },
+                .property_value => |property_value| {
+                    var iter = try node_with_name.node.propertyIterator(
+                        dt,
+                        .{ .value = property_value },
+                    );
+                    if (try iter.next()) |_| return true;
+                },
+            }
+
+            return false;
+        }
     };
 };
 
@@ -1071,7 +1181,9 @@ pub const PHandle = enum(u32) {
 
     /// Find a node by its phandle.
     pub fn node(phandle: PHandle, dt: DeviceTree) IteratorError!?Node.WithName {
-        var node_iter = try dt.iterateNodes();
+        // can't use `.property_name` here because it could be either 'phandle' or 'linux,phandle'
+        var node_iter = dt.nodeIterator(.any);
+
         while (try node_iter.next()) |node_with_name| {
             if (try node_with_name.node.pHandle(dt)) |p_handle| {
                 if (p_handle == phandle) return node_with_name;
@@ -1306,15 +1418,46 @@ pub const Property = struct {
         };
     };
 
+    pub const Match = union(enum) {
+        /// Match any property.
+        any,
+
+        /// Match a property by name.
+        name: []const u8,
+
+        /// Match a property by name and value.
+        value: Property,
+
+        inline fn isMatch(match: Match, match_prop_name: []const u8, actual_prop: Property) bool {
+            switch (match) {
+                .any => return true,
+                .name => return std.mem.eql(u8, actual_prop.name, match_prop_name),
+                .value => |match_prop| {
+                    if (!std.mem.eql(u8, actual_prop.name, match_prop_name)) return false;
+
+                    return std.mem.eql(
+                        u8,
+                        actual_prop.value._raw,
+                        match_prop.value._raw,
+                    );
+                },
+            }
+        }
+    };
+
     /// An iterator over properties of a node.
     pub const Iterator = struct {
-        tag_iterator: TagIterator,
-
+        tag_iterator: Tag.Iterator,
         strings_block: [*]const u8,
         offset_limit: u32,
 
+        match: Match,
+
+        /// Used only when `match` is `.name` or `.value`.
+        match_prop_name: []const u8,
+
         /// Get the next property.
-        pub fn next(self: *Iterator) IteratorNextError!?Property {
+        pub fn next(self: *Iterator) IteratorError!?Property {
             const offset_limit = self.offset_limit;
 
             var value: Tag.Value = undefined;
@@ -1333,10 +1476,14 @@ pub const Property = struct {
                             if (self.strings_block[offset] == 0) break;
                         }
 
-                        return .{
+                        const actual_prop: Property = .{
                             .name = self.strings_block[name_start_offset..][0 .. offset - name_start_offset :0],
                             .value = .{ ._raw = value.prop.value },
                         };
+
+                        if (self.match.isMatch(self.match_prop_name, actual_prop)) {
+                            return actual_prop;
+                        }
                     },
                     .nop => continue,
                     else => self.tag_iterator.offset = null,
@@ -1399,190 +1546,21 @@ pub const Version = enum(u32) {
 };
 
 pub const IteratorError = error{
-    /// Provided offset is out of bounds, misaligned or is not an offset of a valid tag.
+    /// Provided offset is out of bounds or is not an offset of a valid tag.
     BadOffset,
-} || IteratorNextError;
 
-pub const IteratorNextError = error{
     /// The devicetree is improperly terminated.
     Truncated,
 };
 
-pub const NodeMatch = union(enum) {
-    /// Match a node by name.
-    name: []const u8,
-
-    /// Match a node by property name.
-    property_name: []const u8,
-
-    /// Match a node by property name and value.
-    property_value: Property,
-};
-
-pub const PropertyMatch = union(enum) {
-    /// Match a property by name.
-    name: []const u8,
-
-    /// Match a property by name and value.
-    value: Property,
-};
-
-fn findNodeInner(
-    dt: DeviceTree,
-    node_iter: *Node.Iterator,
-    match: NodeMatch,
-) IteratorError!?Node.WithName {
-    // used only when `match` is `.name`
-    const match_name_no_address = switch (match) {
-        .name => |name| std.mem.indexOfScalar(u8, name, '@') == null,
-        else => false,
-    };
-
-    while (try node_iter.next()) |node_with_name| {
-        switch (match) {
-            .name => |match_name| {
-                const name = node_with_name.name;
-
-                if (name.len < match_name.len) {
-                    continue;
-                }
-
-                if (!std.mem.eql(u8, name[0..match_name.len], match_name)) {
-                    continue;
-                }
-
-                if (name[match_name.len] == 0) {
-                    return node_with_name;
-                }
-
-                if (match_name_no_address and name[match_name.len] == '@') {
-                    return node_with_name;
-                }
-            },
-            .property_name => |property_name| if (try node_with_name.node.findProperty(
-                dt,
-                .{ .name = property_name },
-            )) |_| return node_with_name,
-            .property_value => |property_value| if (try node_with_name.node.findProperty(
-                dt,
-                .{ .value = property_value },
-            )) |_| return node_with_name,
-        }
-    }
-
-    return null;
-}
-
 /// Iterate over the tags of a device tree.
-fn tagIterator(dt: DeviceTree, start_offset: u32) error{BadOffset}!TagIterator {
-    if (!std.mem.isAligned(start_offset, 4)) {
-        @branchHint(.cold);
-        return error.BadOffset;
-    }
-
-    if (start_offset + dt.structure_block_offset >= dt.fdt.len) {
-        @branchHint(.cold);
-        return error.BadOffset;
-    }
-
-    const offset_limit: u32 = if (dt.structure_block_size) |size| blk: {
-        if (start_offset >= size) {
-            @branchHint(.cold);
-            return error.BadOffset;
-        }
-        break :blk size;
-    } else @intCast(dt.fdt.len - dt.structure_block_offset);
-
+fn tagIterator(dt: DeviceTree, start_offset: u32) Tag.Iterator {
     return .{
         .structure_block = @alignCast(dt.fdt.ptr + dt.structure_block_offset),
-        .offset_limit = offset_limit,
+        .offset_limit = dt.structure_block_offset_limit,
         .offset = start_offset,
     };
 }
-
-/// An iterator over the tags of a device tree.
-const TagIterator = struct {
-    structure_block: [*]align(4) const u8,
-    offset_limit: u32,
-
-    offset: ?u32,
-
-    /// Get the next tag.
-    pub fn next(self: *TagIterator, value: *Tag.Value) error{Truncated}!?Tag.Tuple {
-        const offset_limit = self.offset_limit;
-        var offset = self.offset orelse return null;
-
-        while (true) {
-            if (offset + @sizeOf(Tag) > offset_limit) {
-                @branchHint(.cold);
-                return error.Truncated;
-            }
-
-            const tag: Tag = .read(self.structure_block[offset..]);
-            const tag_offset = offset;
-            offset += @sizeOf(Tag);
-
-            switch (tag) {
-                .begin_node => {
-                    const name_start_offset = offset;
-                    while (true) {
-                        if (offset >= offset_limit) {
-                            @branchHint(.cold);
-                            return error.Truncated;
-                        }
-
-                        if (self.structure_block[offset] == 0) {
-                            value.* = .{
-                                .begin_node = self.structure_block[name_start_offset..][0 .. offset - name_start_offset :0],
-                            };
-                            offset += 1; // to account for the null terminator
-                            break;
-                        }
-                        offset += 1;
-                    }
-
-                    self.offset = std.mem.alignForward( // account for any alignment padding
-                        u32,
-                        offset,
-                        @sizeOf(Tag),
-                    );
-                },
-                .end_node => self.offset = offset,
-                .prop => {
-                    if (offset + @sizeOf(Property.Raw) > offset_limit) {
-                        @branchHint(.cold);
-                        return error.Truncated;
-                    }
-
-                    const prop: Property.Raw = .read(@alignCast(self.structure_block[offset..]));
-                    offset += @sizeOf(Property.Raw);
-
-                    if (offset + prop.len > offset_limit) {
-                        @branchHint(.cold);
-                        return error.Truncated;
-                    }
-
-                    value.* = .{
-                        .prop = .{
-                            .value = self.structure_block[offset..][0..prop.len],
-                            .name_offset = prop.name_offset,
-                        },
-                    };
-
-                    self.offset = std.mem.alignForward( // account for any alignment padding
-                        u32,
-                        offset + prop.len,
-                        @sizeOf(Tag),
-                    );
-                },
-                .nop => continue,
-                .end => self.offset = null,
-            }
-
-            return .{ .tag = tag, .offset = tag_offset };
-        }
-    }
-};
 
 const Tag = enum(u32) {
     begin_node = nativeToBig(u32, 0x1),
@@ -1595,6 +1573,90 @@ const Tag = enum(u32) {
         const ptr: *const Tag = @ptrCast(@alignCast(structure_block_ptr));
         return ptr.*;
     }
+
+    /// An iterator over the tags of a device tree.
+    const Iterator = struct {
+        structure_block: [*]align(4) const u8,
+        offset_limit: u32,
+
+        offset: ?u32,
+
+        /// Get the next tag.
+        pub fn next(self: *Iterator, value: *Tag.Value) error{Truncated}!?Tag.Tuple {
+            const offset_limit = self.offset_limit;
+            var offset = self.offset orelse return null;
+
+            while (true) {
+                if (offset + @sizeOf(Tag) > offset_limit) {
+                    @branchHint(.cold);
+                    return error.Truncated;
+                }
+
+                const tag: Tag = .read(self.structure_block[offset..]);
+                const tag_offset = offset;
+                offset += @sizeOf(Tag);
+
+                switch (tag) {
+                    .begin_node => {
+                        const name_start_offset = offset;
+                        while (true) {
+                            if (offset >= offset_limit) {
+                                @branchHint(.cold);
+                                return error.Truncated;
+                            }
+
+                            if (self.structure_block[offset] == 0) {
+                                value.* = .{
+                                    .begin_node = self.structure_block[name_start_offset..][0 .. offset - name_start_offset :0],
+                                };
+                                offset += 1; // to account for the null terminator
+                                break;
+                            }
+                            offset += 1;
+                        }
+
+                        self.offset = std.mem.alignForward( // account for any alignment padding
+                            u32,
+                            offset,
+                            @sizeOf(Tag),
+                        );
+                    },
+                    .end_node => self.offset = offset,
+                    .prop => {
+                        if (offset + @sizeOf(Property.Raw) > offset_limit) {
+                            @branchHint(.cold);
+                            return error.Truncated;
+                        }
+
+                        const prop: Property.Raw = .read(@alignCast(self.structure_block[offset..]));
+                        offset += @sizeOf(Property.Raw);
+
+                        if (offset + prop.len > offset_limit) {
+                            @branchHint(.cold);
+                            return error.Truncated;
+                        }
+
+                        value.* = .{
+                            .prop = .{
+                                .value = self.structure_block[offset..][0..prop.len],
+                                .name_offset = prop.name_offset,
+                            },
+                        };
+
+                        self.offset = std.mem.alignForward( // account for any alignment padding
+                            u32,
+                            offset + prop.len,
+                            @sizeOf(Tag),
+                        );
+                    },
+                    .nop => continue,
+                    .end => self.offset = null,
+                }
+
+                return .{ .tag = tag, .offset = tag_offset };
+            }
+        }
+    };
 
     const Tuple = struct {
         tag: Tag,
