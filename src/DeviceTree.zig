@@ -351,6 +351,44 @@ test firstNodeWithCompatible {
     try std.testing.expectEqualStrings("pci@30000000", node.?.name);
 }
 
+/// Iterate over all nodes in a device tree that have a compatible property and for each node that the provided
+/// `match_function` returns `true` for return a `CompatibleMatch`.
+pub fn compatibleMatchIterator(
+    dt: DeviceTree,
+    context: anytype,
+    comptime match_function: fn (context: @TypeOf(context), compatible: [:0]const u8) bool,
+) CompatibleMatchIterator(@TypeOf(context), match_function) {
+    return .{
+        .node_iter = dt.nodeIterator(.{ .property_name = "compatible" }),
+        .context = context,
+    };
+}
+
+test compatibleMatchIterator {
+    const dt: DeviceTree = try .fromSlice(shared.test_dtb);
+
+    var lookup: std.StringHashMapUnmanaged(void) = .empty;
+    defer lookup.deinit(std.testing.allocator);
+    try lookup.put(std.testing.allocator, "google,goldfish-rtc", {});
+    try lookup.put(std.testing.allocator, "riscv,plic0", {});
+
+    const match_function = struct {
+        pub fn match(hash_set: *const std.StringHashMapUnmanaged(void), compatible: [:0]const u8) bool {
+            return hash_set.contains(compatible);
+        }
+    }.match;
+
+    var iter = dt.compatibleMatchIterator(&lookup, match_function);
+
+    const compatible_match = (try iter.next(dt)).?;
+    try std.testing.expectEqualStrings("rtc@101000", compatible_match.node.name);
+
+    const compatible_match2 = (try iter.next(dt)).?;
+    try std.testing.expectEqualStrings("plic@c000000", compatible_match2.node.name);
+
+    try shared.customExpectEqual(try iter.next(dt), null);
+}
+
 /// Iterate over all nodes in a device tree that match `match`.
 ///
 /// See `Node.Match` for more information on the different matching types.
@@ -573,6 +611,46 @@ pub const IteratorError = error{
     /// The devicetree is improperly terminated.
     Truncated,
 };
+
+pub const CompatibleMatch = struct {
+    compatible: [:0]const u8,
+    node: Node.WithName,
+};
+
+pub fn CompatibleMatchIterator(
+    comptime ContextT: type,
+    comptime match_function: fn (context: ContextT, compatible: [:0]const u8) bool,
+) type {
+    return struct {
+        node_iter: Node.Iterator,
+        context: ContextT,
+
+        const Self = @This();
+
+        pub fn next(self: *Self, dt: DeviceTree) IteratorError!?CompatibleMatch {
+            while (try self.node_iter.next(dt)) |node_with_name| {
+                const compatible_property = (try node_with_name.node.firstMatchingProperty(dt, .{
+                    .name = "compatible",
+                })) orelse {
+                    @branchHint(.cold); // the iterator should have filtered out nodes without a compatible property
+                    continue;
+                };
+
+                var iter = compatible_property.value.stringListIterator();
+                while (try iter.next()) |compatible| {
+                    if (match_function(self.context, compatible)) {
+                        return .{
+                            .compatible = compatible,
+                            .node = node_with_name,
+                        };
+                    }
+                }
+            }
+
+            return null;
+        }
+    };
+}
 
 const Tag = @import("Tag.zig").Tag;
 
