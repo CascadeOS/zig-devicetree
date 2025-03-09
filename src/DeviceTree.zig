@@ -413,9 +413,6 @@ test findNodeWithCompatible {
 pub const NodeFromPathError = error{
     /// The path is invalid.
     BadPath,
-
-    /// Non-absolute path refers to a non-existent alias.
-    NonExistentAlias,
 } || IteratorError;
 
 /// Find a node by its full path.
@@ -466,7 +463,8 @@ pub fn nodeFromPath(dt: DeviceTree, path: []const u8) NodeFromPathError!?Node.Wi
         };
         const resolved_alias = (try dt.getAlias(alias)) orelse {
             @branchHint(.cold);
-            return error.NonExistentAlias;
+            // non-existent alias
+            return null;
         };
         break :blk (try dt.nodeFromPath(resolved_alias)) orelse root_with_name;
     } else blk: {
@@ -507,10 +505,12 @@ test nodeFromPath {
     const memory_node = (try dt.nodeFromPath("memory")).?;
     try std.testing.expectEqualStrings("memory@80000000", memory_node.name);
 
+    // non-existent alias
+    try customExpectEqual(try dt.nodeFromPath("no_alias"), null);
+
     try std.testing.expectError(error.BadPath, dt.nodeFromPath(""));
     try std.testing.expectError(error.BadPath, dt.nodeFromPath("//"));
     try std.testing.expectError(error.BadPath, dt.nodeFromPath("/soc/serial@10000000/"));
-    try std.testing.expectError(error.NonExistentAlias, dt.nodeFromPath("no_alias"));
 }
 
 /// A node in a device tree.
