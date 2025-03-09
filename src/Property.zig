@@ -33,94 +33,34 @@ pub const Value = struct {
         try std.testing.expectEqualStrings("✓", Value.fromString("✓").toString());
     }
 
-    /// Converts a `PHandle` to a `Value`.
-    ///
-    /// The `buf` parameter is used to store the raw value of the `Value`.
-    pub fn fromPHandle(phandle: PHandle, buf: *[4]u8) Value {
-        return .fromU32(@intFromEnum(phandle), buf);
-    }
-
-    /// Converts a `Value` to a `PHandle`.
-    pub fn toPHandle(self: Value) PHandle {
-        return @enumFromInt(self.toU32());
-    }
-
-    test "Property.Value.fromPHandle/toPHandle" {
-        const handles: []const PHandle = &.{
-            @enumFromInt(0x1),
-            @enumFromInt(0x12345678),
-        };
-
-        var buf: [4]u8 = undefined;
-
-        for (handles) |handle| {
-            try shared.customExpectEqual(handle, fromPHandle(handle, &buf).toPHandle());
-        }
-    }
-
-    /// Converts a `Value` to a `u32`.
-    pub fn toU32(self: Value) u32 {
-        const ptr: *align(1) const u32 = @ptrCast(self._raw.ptr);
-        return shared.bigToNative(u32, ptr.*);
-    }
-
-    /// Converts a `u32` to a `Value`.
-    ///
-    /// The `buf` parameter is used to store the raw value of the `Value`.
-    pub fn fromU32(val: u32, buf: *[4]u8) Value {
-        const ptr: *align(1) u32 = @ptrCast(buf);
-        ptr.* = shared.nativeToBig(u32, val);
-        return Value{ ._raw = buf[0..] };
-    }
-
-    test "Property.Value.toU32/fromU32" {
-        const values: []const u32 = &.{
-            0x1,
-            0x12345678,
-        };
-
-        var buf: [4]u8 = undefined;
-
-        for (values) |val| {
-            try shared.customExpectEqual(val, fromU32(val, &buf).toU32());
-        }
-    }
-
-    /// Converts a `Value` to a `u64`.
-    pub fn toU64(self: Value) u64 {
-        const ptr: *align(1) const u64 = @ptrCast(self._raw.ptr);
-        return shared.bigToNative(u64, ptr.*);
-    }
-
-    /// Converts a `u64` to a `Value`.
-    ///
-    /// The `buf` parameter is used to store the raw value of the `Value`.
-    pub fn fromU64(val: u64, buf: *[8]u8) Value {
-        const ptr: *align(1) u64 = @ptrCast(buf);
-        ptr.* = shared.nativeToBig(u64, val);
-        return Value{ ._raw = buf[0..] };
-    }
-
-    test "Property.Value.toU64/fromU64" {
-        const values: []const u64 = &.{
-            0x1,
-            0x12345678,
-            0x123456789abcdef0,
-        };
-
-        var buf: [8]u8 = undefined;
-
-        for (values) |val| {
-            try shared.customExpectEqual(val, fromU64(val, &buf).toU64());
-        }
-    }
-
     /// Iterate over the strings in a `Value` which is a string list.
     pub fn stringListIterator(self: Value) StringListIterator {
         return .{
             .string_list = self._raw,
         };
     }
+
+    pub const StringListIterator = struct {
+        string_list: []const u8,
+
+        pub const Error = error{
+            /// The string list does not end with a null terminator.
+            Truncated,
+        };
+
+        pub fn next(self: *StringListIterator) Error!?[:0]const u8 {
+            if (self.string_list.len == 0) return null;
+
+            const len = std.mem.indexOfScalar(u8, self.string_list, 0) orelse {
+                @branchHint(.cold);
+                return Error.Truncated;
+            };
+
+            const str: [:0]const u8 = self.string_list[0..len :0];
+            self.string_list = self.string_list[len + 1 ..];
+            return str;
+        }
+    };
 
     /// Create a `Value` from a comptime string list.
     pub fn fromComptimeStringList(comptime strings: []const []const u8) Value {
@@ -197,27 +137,313 @@ pub const Value = struct {
         try std.testing.expectEqual(null, try iter.next());
     }
 
-    pub const StringListIterator = struct {
-        string_list: []const u8,
+    /// Converts a `PHandle` to a `Value`.
+    ///
+    /// The `buf` parameter is used to store the raw value of the `Value`.
+    pub fn fromPHandle(phandle: PHandle, buf: *[4]u8) Value {
+        return .fromU32(@intFromEnum(phandle), buf);
+    }
 
-        pub const Error = error{
-            /// The string list does not end with a null terminator.
-            Truncated,
+    /// Converts a `Value` to a `PHandle`.
+    pub fn toPHandle(self: Value) PHandle {
+        return @enumFromInt(self.toU32());
+    }
+
+    test "Property.Value.fromPHandle/toPHandle" {
+        const handles: []const PHandle = &.{
+            @enumFromInt(0x1),
+            @enumFromInt(0x12345678),
         };
 
-        pub fn next(self: *StringListIterator) Error!?[:0]const u8 {
-            if (self.string_list.len == 0) return null;
+        var buf: [4]u8 = undefined;
 
-            const len = std.mem.indexOfScalar(u8, self.string_list, 0) orelse {
-                @branchHint(.cold);
-                return Error.Truncated;
-            };
+        for (handles) |handle| {
+            try shared.customExpectEqual(handle, fromPHandle(handle, &buf).toPHandle());
+        }
+    }
 
-            const str: [:0]const u8 = self.string_list[0..len :0];
-            self.string_list = self.string_list[len + 1 ..];
-            return str;
+    pub const ListIteratorError = error{
+        /// The size of the `Value` is not a multiple of type the iterator is for.
+        SizeNotMultiple,
+    };
+
+    /// Iterate over the value as a list of `PHandle`s.
+    pub fn pHandleListIterator(self: Value) ListIteratorError!PHandleListIterator {
+        if (!std.mem.isAligned(self._raw.len, @sizeOf(PHandle))) {
+            @branchHint(.cold);
+            return error.SizeNotMultiple;
+        }
+
+        const phandle_list: []align(1) const u32 = std.mem.bytesAsSlice(u32, self._raw);
+
+        return .{
+            .phandle_list = phandle_list,
+        };
+    }
+
+    pub const PHandleListIterator = struct {
+        phandle_list: []align(1) const u32,
+
+        pub fn next(self: *PHandleListIterator) ?PHandle {
+            if (self.phandle_list.len == 0) return null;
+
+            const phandle_value = shared.bigToNative(u32, self.phandle_list[0]);
+
+            self.phandle_list = self.phandle_list[1..];
+
+            return @enumFromInt(phandle_value);
         }
     };
+
+    pub const PHandleListBuilder = struct {
+        buf: std.ArrayListUnmanaged(u32) = .empty,
+
+        /// Append a PHandle to the phandle list.
+        pub fn append(self: *PHandleListBuilder, allocator: std.mem.Allocator, phandle: PHandle) !void {
+            try self.buf.append(allocator, shared.nativeToBig(u32, @intFromEnum(phandle)));
+        }
+
+        /// Deinitialize the phandle list.
+        pub fn deinit(self: *PHandleListBuilder, allocator: std.mem.Allocator) void {
+            self.buf.deinit(allocator);
+        }
+
+        /// Get the handle list as a `Value`.
+        ///
+        /// The `Value` references the internal buffer of the `PHandleListBuilder`, not a copy.
+        ///
+        /// Any modifications to the `PHandleListBuilder` after calling this function will not be reflected in the
+        /// `Value`.
+        pub fn toValue(self: PHandleListBuilder) Value {
+            return .{ ._raw = std.mem.sliceAsBytes(self.buf.items) };
+        }
+    };
+
+    test PHandleListBuilder {
+        var builder: PHandleListBuilder = .{};
+        defer builder.deinit(std.testing.allocator);
+
+        try builder.append(std.testing.allocator, @enumFromInt(0x01));
+        try builder.append(std.testing.allocator, @enumFromInt(0x02));
+        try builder.append(std.testing.allocator, @enumFromInt(0x03));
+        try builder.append(std.testing.allocator, @enumFromInt(0x04));
+        try builder.append(std.testing.allocator, @enumFromInt(0x05));
+
+        const phandle_list = builder.toValue();
+
+        var iter = try phandle_list.pHandleListIterator();
+        try shared.customExpectEqual(iter.next(), @enumFromInt(0x01));
+        try shared.customExpectEqual(iter.next(), @enumFromInt(0x02));
+        try shared.customExpectEqual(iter.next(), @enumFromInt(0x03));
+        try shared.customExpectEqual(iter.next(), @enumFromInt(0x04));
+        try shared.customExpectEqual(iter.next(), @enumFromInt(0x05));
+        try shared.customExpectEqual(iter.next(), null);
+    }
+
+    /// Converts a `Value` to a `u32`.
+    pub fn toU32(self: Value) u32 {
+        const ptr: *align(1) const u32 = @ptrCast(self._raw.ptr);
+        return shared.bigToNative(u32, ptr.*);
+    }
+
+    /// Converts a `u32` to a `Value`.
+    ///
+    /// The `buf` parameter is used to store the raw value of the `Value`.
+    pub fn fromU32(val: u32, buf: *[4]u8) Value {
+        const ptr: *align(1) u32 = @ptrCast(buf);
+        ptr.* = shared.nativeToBig(u32, val);
+        return Value{ ._raw = buf[0..] };
+    }
+
+    test "Property.Value.toU32/fromU32" {
+        const values: []const u32 = &.{
+            0x1,
+            0x12345678,
+        };
+
+        var buf: [4]u8 = undefined;
+
+        for (values) |val| {
+            try shared.customExpectEqual(val, fromU32(val, &buf).toU32());
+        }
+    }
+
+    /// Iterate over the value as a list of `u32`s.
+    pub fn u32ListIterator(self: Value) ListIteratorError!U32ListIterator {
+        if (!std.mem.isAligned(self._raw.len, @sizeOf(u32))) {
+            @branchHint(.cold);
+            return error.SizeNotMultiple;
+        }
+
+        const u32_list: []align(1) const u32 = std.mem.bytesAsSlice(u32, self._raw);
+
+        return .{
+            .u32_list = u32_list,
+        };
+    }
+
+    pub const U32ListIterator = struct {
+        u32_list: []align(1) const u32,
+
+        pub fn next(self: *U32ListIterator) ?u32 {
+            if (self.u32_list.len == 0) return null;
+
+            const value = shared.bigToNative(u32, self.u32_list[0]);
+
+            self.u32_list = self.u32_list[1..];
+
+            return value;
+        }
+    };
+
+    pub const U32ListBuilder = struct {
+        buf: std.ArrayListUnmanaged(u32) = .empty,
+
+        /// Append a u32 to the u32 list.
+        pub fn append(self: *U32ListBuilder, allocator: std.mem.Allocator, value: u32) !void {
+            try self.buf.append(allocator, shared.nativeToBig(u32, value));
+        }
+
+        /// Deinitialize the u32 list.
+        pub fn deinit(self: *U32ListBuilder, allocator: std.mem.Allocator) void {
+            self.buf.deinit(allocator);
+        }
+
+        /// Get the u32 list as a `Value`.
+        ///
+        /// The `Value` references the internal buffer of the `U32ListBuilder`, not a copy.
+        ///
+        /// Any modifications to the `U32ListBuilder` after calling this function will not be reflected in the
+        /// `Value`.
+        pub fn toValue(self: U32ListBuilder) Value {
+            return .{ ._raw = std.mem.sliceAsBytes(self.buf.items) };
+        }
+    };
+
+    test U32ListBuilder {
+        var builder: U32ListBuilder = .{};
+        defer builder.deinit(std.testing.allocator);
+
+        try builder.append(std.testing.allocator, 0x01);
+        try builder.append(std.testing.allocator, 0x02);
+        try builder.append(std.testing.allocator, 0x03);
+        try builder.append(std.testing.allocator, 0x04);
+        try builder.append(std.testing.allocator, 0x05);
+
+        const u32_list = builder.toValue();
+
+        var iter = try u32_list.u32ListIterator();
+        try shared.customExpectEqual(iter.next(), 0x01);
+        try shared.customExpectEqual(iter.next(), 0x02);
+        try shared.customExpectEqual(iter.next(), 0x03);
+        try shared.customExpectEqual(iter.next(), 0x04);
+        try shared.customExpectEqual(iter.next(), 0x05);
+        try shared.customExpectEqual(iter.next(), null);
+    }
+
+    /// Converts a `Value` to a `u64`.
+    pub fn toU64(self: Value) u64 {
+        const ptr: *align(1) const u64 = @ptrCast(self._raw.ptr);
+        return shared.bigToNative(u64, ptr.*);
+    }
+
+    /// Converts a `u64` to a `Value`.
+    ///
+    /// The `buf` parameter is used to store the raw value of the `Value`.
+    pub fn fromU64(val: u64, buf: *[8]u8) Value {
+        const ptr: *align(1) u64 = @ptrCast(buf);
+        ptr.* = shared.nativeToBig(u64, val);
+        return Value{ ._raw = buf[0..] };
+    }
+
+    test "Property.Value.toU64/fromU64" {
+        const values: []const u64 = &.{
+            0x1,
+            0x12345678,
+            0x123456789abcdef0,
+        };
+
+        var buf: [8]u8 = undefined;
+
+        for (values) |val| {
+            try shared.customExpectEqual(val, fromU64(val, &buf).toU64());
+        }
+    }
+
+    /// Iterate over the value as a list of `u64`s.
+    pub fn u64ListIterator(self: Value) ListIteratorError!U64ListIterator {
+        if (!std.mem.isAligned(self._raw.len, @sizeOf(u64))) {
+            @branchHint(.cold);
+            return error.SizeNotMultiple;
+        }
+
+        const u64_list: []align(1) const u64 = std.mem.bytesAsSlice(u64, self._raw);
+
+        return .{
+            .u64_list = u64_list,
+        };
+    }
+
+    pub const U64ListIterator = struct {
+        u64_list: []align(1) const u64,
+
+        pub fn next(self: *U64ListIterator) ?u64 {
+            if (self.u64_list.len == 0) return null;
+
+            const value = shared.bigToNative(u64, self.u64_list[0]);
+
+            self.u64_list = self.u64_list[1..];
+
+            return value;
+        }
+    };
+
+    pub const U64ListBuilder = struct {
+        buf: std.ArrayListUnmanaged(u64) = .empty,
+
+        /// Append a u64 to the u64 list.
+        pub fn append(self: *U64ListBuilder, allocator: std.mem.Allocator, value: u64) !void {
+            try self.buf.append(allocator, shared.nativeToBig(u64, value));
+        }
+
+        /// Deinitialize the u64 list.
+        pub fn deinit(self: *U64ListBuilder, allocator: std.mem.Allocator) void {
+            self.buf.deinit(allocator);
+        }
+
+        /// Get the u64 list as a `Value`.
+        ///
+        /// The `Value` references the internal buffer of the `U64ListBuilder`, not a copy.
+        ///
+        /// Any modifications to the `U32ListBuU64ListBuilderilder` after calling this function will not be reflected in the
+        /// `Value`.
+        pub fn toValue(self: U64ListBuilder) Value {
+            return .{ ._raw = std.mem.sliceAsBytes(self.buf.items) };
+        }
+    };
+
+    test U64ListBuilder {
+        var builder: U64ListBuilder = .{};
+        defer builder.deinit(std.testing.allocator);
+
+        try builder.append(std.testing.allocator, 0x01);
+        try builder.append(std.testing.allocator, 0x02);
+        try builder.append(std.testing.allocator, 0x03);
+        try builder.append(std.testing.allocator, 0x04);
+        try builder.append(std.testing.allocator, 0x05);
+        try builder.append(std.testing.allocator, 0xFFFFFFFFFFFFFFFF);
+
+        const u64_list = builder.toValue();
+
+        var iter = try u64_list.u64ListIterator();
+        try shared.customExpectEqual(iter.next(), 0x01);
+        try shared.customExpectEqual(iter.next(), 0x02);
+        try shared.customExpectEqual(iter.next(), 0x03);
+        try shared.customExpectEqual(iter.next(), 0x04);
+        try shared.customExpectEqual(iter.next(), 0x05);
+        try shared.customExpectEqual(iter.next(), 0xFFFFFFFFFFFFFFFF);
+        try shared.customExpectEqual(iter.next(), null);
+    }
 };
 
 pub const Match = union(enum) {
