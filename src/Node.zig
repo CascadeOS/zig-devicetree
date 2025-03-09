@@ -269,13 +269,9 @@ pub const Node = enum(u32) {
 
     /// Check if a node has a compatible property which lists the given `compatible` string.
     pub fn checkCompatible(node: Node, dt: DeviceTree, compatible: []const u8) CheckCompatibleError!bool {
-        const compatible_property = (try node.firstMatchingProperty(
-            dt,
-            .{ .name = "compatible" },
-        )) orelse return false;
+        var compatible_iter = try node.compatibleIterator(dt);
 
-        var string_list_iter = compatible_property.value.stringListIterator();
-        while (try string_list_iter.next()) |string| {
+        while (try compatible_iter.next()) |string| {
             if (std.mem.eql(u8, string, compatible)) return true;
         }
 
@@ -379,6 +375,29 @@ pub const Node = enum(u32) {
         try std.testing.expectEqualStrings("pci@30000000", compatible_match2.node.name);
 
         try shared.customExpectEqual(try iter.next(dt), null);
+    }
+
+    /// Fetch an iterator over the values of the `compatible` property of a node.
+    ///
+    /// Returns an empty iterator if the node does not have a `compatible` property.
+    pub fn compatibleIterator(node: Node, dt: DeviceTree) IteratorError!Property.Value.StringListIterator {
+        const compatible_property = (try node.firstMatchingProperty(
+            dt,
+            .{ .name = "compatible" },
+        )) orelse return .{ .string_list = &.{} };
+        return compatible_property.value.stringListIterator();
+    }
+
+    test compatibleIterator {
+        const dt: DeviceTree = try .fromSlice(shared.test_dtb);
+
+        const test_node = (try dt.firstMatchingNode(.{ .name = "test@100000" })).?.node;
+
+        var compatible_iter = try test_node.compatibleIterator(dt);
+        try std.testing.expectEqualStrings("sifive,test1", (try compatible_iter.next()).?);
+        try std.testing.expectEqualStrings("sifive,test0", (try compatible_iter.next()).?);
+        try std.testing.expectEqualStrings("syscon", (try compatible_iter.next()).?);
+        try shared.customExpectEqual(try compatible_iter.next(), null);
     }
 
     /// Fetch the `#address-cells` property of a node if it exists.

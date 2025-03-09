@@ -629,15 +629,9 @@ pub fn CompatibleMatchIterator(
 
         pub fn next(self: *Self, dt: DeviceTree) IteratorError!?CompatibleMatch {
             while (try self.node_iter.next(dt)) |node_with_name| {
-                const compatible_property = (try node_with_name.node.firstMatchingProperty(dt, .{
-                    .name = "compatible",
-                })) orelse {
-                    @branchHint(.cold); // the iterator should have filtered out nodes without a compatible property
-                    continue;
-                };
+                var compatible_iter = try node_with_name.node.compatibleIterator(dt);
 
-                var iter = compatible_property.value.stringListIterator();
-                while (try iter.next()) |compatible| {
+                while (try compatible_iter.next()) |compatible| {
                     if (match_function(self.context, compatible)) {
                         return .{
                             .compatible = compatible,
