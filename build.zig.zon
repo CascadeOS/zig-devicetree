@@ -4,7 +4,7 @@
 .{
     .name = .devicetree,
 
-    .version = "2.0.0",
+    .version = "3.0.0",
 
     .minimum_zig_version = "0.14.0",
 
@@ -17,6 +17,11 @@
         "build.zig.zon",
 
         "src/DeviceTree.zig",
+        "src/Node.zig",
+        "src/PHandle.zig",
+        "src/Property.zig",
+        "src/shared.zig",
+        "src/Tag.zig",
     },
 
     .fingerprint = 0x10ab9dbfac5c9471,
