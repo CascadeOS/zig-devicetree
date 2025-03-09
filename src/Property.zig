@@ -444,6 +444,88 @@ pub const Value = struct {
         try shared.customExpectEqual(iter.next(), 0xFFFFFFFFFFFFFFFF);
         try shared.customExpectEqual(iter.next(), null);
     }
+
+    pub const RegValue = struct {
+        address: u64,
+        size: u64,
+    };
+
+    /// Iterate over the value as a list of `RegValue`s.
+    ///
+    /// `address_cells` and `size_cells` must be less than or equal to 2.
+    pub fn regIterator(self: Value, address_cells: u32, size_cells: u32) ListIteratorError!RegIterator {
+        const size_of_one_element = (address_cells + size_cells) * @sizeOf(u32);
+        if (self._raw.len % size_of_one_element != 0) {
+            @branchHint(.cold);
+            return error.SizeNotMultiple;
+        }
+
+        // TODO: support address_cells and size_cells greater than two
+        if (address_cells > 2 or size_cells > 2) {
+            @panic("address_cells or size_cells greater than two is not supported");
+        }
+
+        return .{
+            .cells = std.mem.bytesAsSlice(u32, self._raw),
+            .address_cells = address_cells,
+            .size_cells = size_cells,
+        };
+    }
+
+    test regIterator {
+        const dt: DeviceTree = try .fromSlice(shared.test_dtb);
+
+        const flash_node = (try dt.firstMatchingNode(.{ .name = "flash" })).?.node;
+
+        const reg_property = (try flash_node.firstMatchingProperty(dt, .{
+            .name = "reg",
+        })).?;
+
+        var iter = try reg_property.value.regIterator(2, 2);
+        try shared.customExpectEqual(iter.next(), .{
+            .address = 0x20000000,
+            .size = 0x2000000,
+        });
+        try shared.customExpectEqual(iter.next(), .{
+            .address = 0x22000000,
+            .size = 0x2000000,
+        });
+        try shared.customExpectEqual(iter.next(), null);
+    }
+
+    pub const RegIterator = struct {
+        cells: []align(1) const u32,
+
+        address_cells: u32,
+        size_cells: u32,
+
+        pub fn next(self: *RegIterator) ?RegValue {
+            if (self.cells.len == 0) return null;
+
+            // TODO: support address_cells and size_cells greater than two
+            std.debug.assert(self.address_cells <= 2);
+            std.debug.assert(self.size_cells <= 2);
+
+            var address: u64 = 0;
+            for (0..self.address_cells) |i| {
+                const value: u64 = shared.bigToNative(u32, self.cells[i]);
+                address |= value << @intCast((self.address_cells - i - 1) * 32);
+            }
+            self.cells = self.cells[self.address_cells..];
+
+            var size: u64 = 0;
+            for (0..self.size_cells) |i| {
+                const value: u64 = shared.bigToNative(u32, self.cells[i]);
+                size |= value << @intCast((self.size_cells - i - 1) * 32);
+            }
+            self.cells = self.cells[self.size_cells..];
+
+            return .{
+                .address = address,
+                .size = size,
+            };
+        }
+    };
 };
 
 pub const Match = union(enum) {
