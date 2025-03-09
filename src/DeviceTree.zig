@@ -319,7 +319,7 @@ test getAlias {
 /// See `Node.Match` for more information on the different matching types.
 pub fn firstMatchingNode(dt: DeviceTree, match: Node.Match) IteratorError!?Node.WithName {
     var iter = nodeIterator(dt, match);
-    return try iter.next();
+    return try iter.next(dt);
 }
 
 test firstMatchingNode {
@@ -336,7 +336,7 @@ pub fn firstNodeWithCompatible(
 ) Node.CheckCompatibleError!?Node.WithName {
     var node_iter = dt.nodeIterator(.{ .property_name = "compatible" });
 
-    while (try node_iter.next()) |node_with_name| {
+    while (try node_iter.next(dt)) |node_with_name| {
         if (try node_with_name.node.checkCompatible(dt, compatible)) {
             return node_with_name;
         }
@@ -356,7 +356,6 @@ test firstNodeWithCompatible {
 /// See `Node.Match` for more information on the different matching types.
 pub fn nodeIterator(dt: DeviceTree, match: Node.Match) Node.Iterator {
     return .{
-        .dt = dt,
         .tag_iterator = Tag.iterator(dt, @intFromEnum(Node.root)),
         .iteration_type = .all,
         .match = match,
@@ -376,7 +375,7 @@ test nodeIterator {
 
         var number_of_nodes: usize = 0;
 
-        while (try iter.next()) |_| {
+        while (try iter.next(dt)) |_| {
             number_of_nodes += 1;
         }
 
@@ -387,7 +386,7 @@ test nodeIterator {
     {
         var iter = dt.nodeIterator(.{ .name = "plic@c000000" });
 
-        const plic_node = try iter.next();
+        const plic_node = try iter.next(dt);
         try std.testing.expectEqualStrings("plic@c000000", plic_node.?.name);
     }
 
@@ -395,7 +394,7 @@ test nodeIterator {
     {
         var iter = dt.nodeIterator(.{ .name = "pci" });
 
-        const pci_node = try iter.next();
+        const pci_node = try iter.next(dt);
         try std.testing.expectEqualStrings("pci@30000000", pci_node.?.name);
     }
 
@@ -403,7 +402,7 @@ test nodeIterator {
     {
         var iter = dt.nodeIterator(.{ .property_name = "clock-frequency" });
 
-        const serial_node = try iter.next();
+        const serial_node = try iter.next(dt);
         try std.testing.expectEqualStrings("serial@10000000", serial_node.?.name);
     }
 
@@ -416,7 +415,7 @@ test nodeIterator {
             },
         });
 
-        const cpu0_node = try iter.next();
+        const cpu0_node = try iter.next(dt);
         try std.testing.expectEqualStrings("cpu@0", cpu0_node.?.name);
     }
 }

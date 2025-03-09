@@ -19,7 +19,7 @@ pub const Node = enum(u32) {
         match: Match,
     ) IteratorError!?Node.WithName {
         var iter = try parent_node.iterateSubnodes(dt, iteration_type, match);
-        return try iter.next();
+        return try iter.next(dt);
     }
 
     test firstMatchingSubnode {
@@ -56,7 +56,6 @@ pub const Node = enum(u32) {
         }
 
         return .{
-            .dt = dt,
             .tag_iterator = tag_iterator,
             .iteration_type = switch (iteration_type) {
                 .direct_children => .direct_children,
@@ -91,7 +90,7 @@ pub const Node = enum(u32) {
 
             var number_of_nodes: usize = 0;
 
-            while (try iter.next()) |_| {
+            while (try iter.next(dt)) |_| {
                 number_of_nodes += 1;
             }
 
@@ -108,7 +107,7 @@ pub const Node = enum(u32) {
 
             var number_of_nodes: usize = 0;
 
-            while (try iter.next()) |_| {
+            while (try iter.next(dt)) |_| {
                 number_of_nodes += 1;
             }
 
@@ -123,7 +122,7 @@ pub const Node = enum(u32) {
                 .name = "plic@c000000",
             });
 
-            const plic_node = try iter.next();
+            const plic_node = try iter.next(dt);
             try std.testing.expectEqualStrings("plic@c000000", plic_node.?.name);
         }
 
@@ -133,7 +132,7 @@ pub const Node = enum(u32) {
                 .name = "test",
             });
 
-            const test_node = try iter.next();
+            const test_node = try iter.next(dt);
             try std.testing.expectEqualStrings("test@100000", test_node.?.name);
         }
 
@@ -143,7 +142,7 @@ pub const Node = enum(u32) {
                 .property_name = "interrupt-controller",
             });
 
-            const plic_node = try iter.next();
+            const plic_node = try iter.next(dt);
             try std.testing.expectEqualStrings("plic@c000000", plic_node.?.name);
         }
 
@@ -156,7 +155,7 @@ pub const Node = enum(u32) {
                 },
             });
 
-            const cpu0_node = try iter.next();
+            const cpu0_node = try iter.next(dt);
             try std.testing.expectEqualStrings("cpu@0", cpu0_node.?.name);
         }
     }
@@ -310,7 +309,7 @@ pub const Node = enum(u32) {
             .{ .property_name = "compatible" },
         );
 
-        while (try node_iter.next()) |node_with_name| {
+        while (try node_iter.next(dt)) |node_with_name| {
             if (try node_with_name.node.checkCompatible(dt, compatible)) {
                 return node_with_name;
             }
@@ -586,8 +585,6 @@ pub const Node = enum(u32) {
 
     /// An iterator over nodes in a device tree.
     pub const Iterator = struct {
-        dt: DeviceTree,
-
         tag_iterator: Tag.Iterator,
         iteration_type: IterationType,
         match: Match,
@@ -604,7 +601,7 @@ pub const Node = enum(u32) {
         relative_depth: i32 = 0,
 
         /// Get the next node.
-        pub fn next(self: *Iterator) IteratorError!?Node.WithName {
+        pub fn next(self: *Iterator, dt: DeviceTree) IteratorError!?Node.WithName {
             // used only when `match` is `.name`
             var value: Tag.Value = undefined;
             while (try self.tag_iterator.next(&value)) |tuple| {
@@ -621,7 +618,7 @@ pub const Node = enum(u32) {
                             .node = @enumFromInt(tuple.offset),
                         };
 
-                        if (try self.match.isMatch(self.dt, node_with_name, self.match_name_no_address)) {
+                        if (try self.match.isMatch(dt, node_with_name, self.match_name_no_address)) {
                             return node_with_name;
                         }
                     },

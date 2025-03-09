@@ -10,7 +10,7 @@ pub const PHandle = enum(u32) {
         // can't use `.property_name` here because it could be either 'phandle' or 'linux,phandle'
         var node_iter = dt.nodeIterator(.any);
 
-        while (try node_iter.next()) |node_with_name| {
+        while (try node_iter.next(dt)) |node_with_name| {
             if (try node_with_name.node.pHandle(dt)) |p_handle| {
                 if (p_handle == phandle) return node_with_name;
             }
