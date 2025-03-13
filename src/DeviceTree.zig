@@ -373,7 +373,7 @@ test compatibleMatchIterator {
     try lookup.put(std.testing.allocator, "riscv,plic0", {});
 
     const match_function = struct {
-        pub fn match(hash_set: *const std.StringHashMapUnmanaged(void), compatible: [:0]const u8) bool {
+        fn match(hash_set: *const std.StringHashMapUnmanaged(void), compatible: [:0]const u8) bool {
             return hash_set.contains(compatible);
         }
     }.match;
