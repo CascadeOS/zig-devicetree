@@ -2,6 +2,8 @@
 
 A read-only Flattened Devicetree (DTB) API.
 
+None of the API requires allocation except the various list builders in `Property.Value` which are completely optional.
+
 Compatible with [Devicetree Specification v0.4](https://github.com/devicetree-org/devicetree-specification/releases/tag/v0.4).
 
 [Auto-generated docs](https://cascadeos.github.io/zig-devicetree/)
