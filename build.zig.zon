@@ -4,25 +4,11 @@
 .{
     .name = .devicetree,
 
-    .version = "3.0.0",
+    .version = "3.0.1",
 
-    .minimum_zig_version = "0.14.0",
+    .minimum_zig_version = "0.14.1",
 
-    .paths = .{
-        "LICENSE",
-        "LICENSES",
-        "REUSE.toml",
-
-        "build.zig",
-        "build.zig.zon",
-
-        "src/DeviceTree.zig",
-        "src/Node.zig",
-        "src/PHandle.zig",
-        "src/Property.zig",
-        "src/shared.zig",
-        "src/Tag.zig",
-    },
+    .paths = .{""},
 
     .fingerprint = 0x10ab9dbfac5c9471,
 }
