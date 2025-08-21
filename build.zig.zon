@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: CC0-1.0
-// SPDX-FileCopyrightText: 2025 Lee Cannon <leecannon@leecannon.xyz>
+// SPDX-FileCopyrightText: Lee Cannon <leecannon@leecannon.xyz>
 
 .{
     .name = .devicetree,
 
     .version = "3.0.1",
 
-    .minimum_zig_version = "0.14.1",
+    .minimum_zig_version = "0.15.1",
 
     .paths = .{""},
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause
-// SPDX-FileCopyrightText: 2025 Lee Cannon <leecannon@leecannon.xyz>
+// SPDX-FileCopyrightText: Lee Cannon <leecannon@leecannon.xyz>
 
 pub fn build(b: *std.Build) void {
     const devicetree_mod = b.addModule("DeviceTree", .{

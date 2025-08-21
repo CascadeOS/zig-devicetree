@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause
-// SPDX-FileCopyrightText: 2025 Lee Cannon <leecannon@leecannon.xyz>
+// SPDX-FileCopyrightText: Lee Cannon <leecannon@leecannon.xyz>
 // SPDX-FileCopyrightText: 2006 David Gibson, IBM Corporation.
 
 //! A property of a node.
