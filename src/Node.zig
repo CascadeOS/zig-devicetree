@@ -587,7 +587,7 @@ pub const Node = enum(u32) {
         var full_path: std.ArrayListUnmanaged(u8) = .initBuffer(buf);
 
         if (node == Node.root) {
-            full_path.fixedWriter().writeByte('/') catch {
+            full_path.printBounded("/", .{}) catch {
                 @branchHint(.cold);
                 return error.NoSpace;
             };
@@ -607,12 +607,11 @@ pub const Node = enum(u32) {
         while (try tag_iterator.next(&value)) |tuple| {
             switch (tuple.tag) {
                 .begin_node => {
-                    const writer = full_path.fixedWriter();
-                    writer.writeByte('/') catch {
+                    full_path.printBounded("/", .{}) catch {
                         @branchHint(.cold);
                         return error.NoSpace;
                     };
-                    writer.writeAll(value.begin_node) catch {
+                    full_path.printBounded("{s}", .{value.begin_node}) catch {
                         @branchHint(.cold);
                         return error.NoSpace;
                     };
