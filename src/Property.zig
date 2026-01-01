@@ -475,11 +475,17 @@ pub const Value = struct {
     test regIterator {
         const dt: DeviceTree = try .fromSlice(shared.test_dtb);
 
-        const flash_node = (try dt.firstMatchingNode(.{ .name = "flash" })).?.node;
+        const flash_node = blk: {
+            var node_iter = try dt.nodeIterator(
+                .root,
+                .all_children,
+                .{ .name = "flash" },
+            );
+            break :blk (try node_iter.next(dt)).?.node;
+        };
 
-        const reg_property = (try flash_node.firstMatchingProperty(dt, .{
-            .name = "reg",
-        })).?;
+        var property_iter = try flash_node.propertyIterator(dt, .{ .name = "reg" });
+        const reg_property = (try property_iter.next()).?;
 
         var iter = try reg_property.value.regIterator(2, 2);
         try shared.customExpectEqual(iter.next(), .{

@@ -8,7 +8,11 @@ pub const PHandle = enum(u32) {
     /// Find a node by its phandle.
     pub fn node(phandle: PHandle, dt: DeviceTree) IteratorError!?Node.WithName {
         // can't use `.property_name` here because it could be either 'phandle' or 'linux,phandle'
-        var node_iter = dt.nodeIterator(.any);
+        var node_iter = try dt.nodeIterator(
+            .root,
+            .all_children,
+            .any,
+        );
 
         while (try node_iter.next(dt)) |node_with_name| {
             if (try node_with_name.node.pHandle(dt)) |p_handle| {

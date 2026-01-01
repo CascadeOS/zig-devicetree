@@ -7,183 +7,14 @@ pub const Node = enum(u32) {
     root = 0,
     _,
 
-    /// Get the first subnode of `parent_node` that matches `match`.
-    ///
-    /// See `SubnodeIterationType` for information on the different iteration types.
-    ///
-    /// See `Node.Match` for more information on the different matching types.
-    pub fn firstMatchingSubnode(
-        parent_node: Node,
-        dt: DeviceTree,
-        iteration_type: SubnodeIterationType,
-        match: Match,
-    ) IteratorError!?Node.WithName {
-        var iter = try parent_node.iterateSubnodes(dt, iteration_type, match);
-        return try iter.next(dt);
-    }
-
-    test firstMatchingSubnode {
-        const dt: DeviceTree = try .fromSlice(shared.test_dtb);
-
-        const chosen_node = try Node.root.firstMatchingSubnode(
-            dt,
-            .direct_children,
-            .{ .property_name = "stdout-path" },
-        );
-        try std.testing.expectEqualStrings("chosen", chosen_node.?.name);
-    }
-
-    /// Iterate the subnodes of `parent` that match `match`.
-    ///
-    /// See `SubnodeIterationType` for information on the different iteration types.
-    ///
-    /// See `Node.Match` for more information on the different matching types.
-    pub fn iterateSubnodes(
-        parent_node: Node,
-        dt: DeviceTree,
-        iteration_type: SubnodeIterationType,
-        match: Match,
-    ) IteratorError!Iterator {
-        var tag_iterator = Tag.iterator(dt, @intFromEnum(parent_node));
-
-        // move past `parent_node`
-        var value: Tag.Value = undefined;
-        if (try tag_iterator.next(&value)) |tuple| {
-            if (tuple.tag != .begin_node) {
-                @branchHint(.cold);
-                return error.BadOffset;
-            }
-        }
-
-        return .{
-            .tag_iterator = tag_iterator,
-            .iteration_type = switch (iteration_type) {
-                .direct_children => .direct_children,
-                .all_children => .all_children,
-            },
-            .match = match,
-            .match_name_no_address = switch (match) {
-                .name => |name| std.mem.indexOfScalar(u8, name, '@') == null,
-                else => false,
-            },
-        };
-    }
-
-    pub const SubnodeIterationType = enum {
-        /// Iterate the direct children of the parent node.
-        direct_children,
-
-        /// Iterate all children of the parent node.
-        all_children,
-    };
-
-    test iterateSubnodes {
-        const dt: DeviceTree = try .fromSlice(shared.test_dtb);
-
-        // any - direct children
-        {
-            var iter = try Node.root.iterateSubnodes(
-                dt,
-                .direct_children,
-                .any,
-            );
-
-            var number_of_nodes: usize = 0;
-
-            while (try iter.next(dt)) |_| {
-                number_of_nodes += 1;
-            }
-
-            try shared.customExpectEqual(number_of_nodes, 11);
-        }
-
-        // any - all children
-        {
-            var iter = try Node.root.iterateSubnodes(
-                dt,
-                .all_children,
-                .any,
-            );
-
-            var number_of_nodes: usize = 0;
-
-            while (try iter.next(dt)) |_| {
-                number_of_nodes += 1;
-            }
-
-            try shared.customExpectEqual(number_of_nodes, 30);
-        }
-
-        const soc_node = (try dt.firstMatchingNode(.{ .name = "soc" })).?.node;
-
-        // by name - with address
-        {
-            var iter = try soc_node.iterateSubnodes(dt, .all_children, .{
-                .name = "plic@c000000",
-            });
-
-            const plic_node = try iter.next(dt);
-            try std.testing.expectEqualStrings("plic@c000000", plic_node.?.name);
-        }
-
-        // by name - without address
-        {
-            var iter = try soc_node.iterateSubnodes(dt, .all_children, .{
-                .name = "test",
-            });
-
-            const test_node = try iter.next(dt);
-            try std.testing.expectEqualStrings("test@100000", test_node.?.name);
-        }
-
-        // by property name
-        {
-            var iter = try soc_node.iterateSubnodes(dt, .all_children, .{
-                .property_name = "interrupt-controller",
-            });
-
-            const plic_node = try iter.next(dt);
-            try std.testing.expectEqualStrings("plic@c000000", plic_node.?.name);
-        }
-
-        // by property value
-        {
-            var iter = try Node.root.iterateSubnodes(dt, .all_children, .{
-                .property_value = .{
-                    .name = "mmu-type",
-                    .value = .fromString("riscv,sv57"),
-                },
-            });
-
-            const cpu0_node = try iter.next(dt);
-            try std.testing.expectEqualStrings("cpu@0", cpu0_node.?.name);
-        }
-    }
-
-    /// Get the first property of a node that matches `match`.
-    ///
-    /// See `Property.Match` for more information on the different matching types.
-    pub fn firstMatchingProperty(node: Node, dt: DeviceTree, match: Property.Match) IteratorError!?Property {
-        var iter = try node.propertyIterator(dt, match);
-        return try iter.next();
-    }
-
-    test firstMatchingProperty {
-        const dt: DeviceTree = try .fromSlice(shared.test_dtb);
-
-        const virtio_node = (try dt.firstMatchingNode(.{ .name = "virtio_mmio@10007000" })).?.node;
-
-        const interrupts_property = (try virtio_node.firstMatchingProperty(dt, .{
-            .name = "interrupts",
-        })).?;
-
-        try shared.customExpectEqual(interrupts_property.value.toU32(), 0x07);
-    }
-
     /// Iterate over the properties of a node that match `match`.
     ///
     /// See `Property.Match` for more information on the different matching types.
-    pub fn propertyIterator(node: Node, dt: DeviceTree, match: Property.Match) IteratorError!Property.Iterator {
+    pub fn propertyIterator(
+        node: Node,
+        dt: DeviceTree,
+        match: Property.Match,
+    ) IteratorError!Property.Iterator {
         var tag_iterator = Tag.iterator(dt, @intFromEnum(node));
 
         const match_prop_name: []const u8 = switch (match) {
@@ -281,7 +112,14 @@ pub const Node = enum(u32) {
     test checkCompatible {
         const dt: DeviceTree = try .fromSlice(shared.test_dtb);
 
-        const platform_bus_node = (try dt.firstMatchingNode(.{ .name = "platform-bus" })).?.node;
+        const platform_bus_node = blk: {
+            var node_iter = try dt.nodeIterator(
+                .root,
+                .all_children,
+                .{ .name = "platform-bus" },
+            );
+            break :blk (try node_iter.next(dt)).?.node;
+        };
 
         // match
         try std.testing.expect(try platform_bus_node.checkCompatible(dt, "simple-bus"));
@@ -290,108 +128,31 @@ pub const Node = enum(u32) {
         try std.testing.expect(!(try platform_bus_node.checkCompatible(dt, "ns16550a")));
     }
 
-    /// Find a subnode of `parent_node` with a compatible property which lists the given `compatible` string.
-    ///
-    /// See `SubnodeIterationType` for more information on the different iteration types.
-    pub fn firstSubnodeWithCompatible(
-        parent_node: Node,
-        dt: DeviceTree,
-        iteration_type: SubnodeIterationType,
-        compatible: []const u8,
-    ) CheckCompatibleError!?Node.WithName {
-        var node_iter = try parent_node.iterateSubnodes(
-            dt,
-            iteration_type,
-            .{ .property_name = "compatible" },
-        );
-
-        while (try node_iter.next(dt)) |node_with_name| {
-            if (try node_with_name.node.checkCompatible(dt, compatible)) {
-                return node_with_name;
-            }
-        }
-
-        return null;
-    }
-
-    test firstSubnodeWithCompatible {
-        const dt: DeviceTree = try .fromSlice(shared.test_dtb);
-        const node = try Node.root.firstSubnodeWithCompatible(
-            dt,
-            .direct_children,
-            "syscon-poweroff",
-        );
-        try std.testing.expectEqualStrings("poweroff", node.?.name);
-    }
-
-    /// Iterate over all subnodes of a node that have a compatible property and for each node that the provided
-    /// `match_function` returns `true` for return a `CompatibleMatch`.
-    ///
-    /// See `SubnodeIterationType` for more information on the different iteration types.
-    pub fn subnodeCompatibleMatchIterator(
-        parent_node: Node,
-        dt: DeviceTree,
-        iteration_type: SubnodeIterationType,
-        context: anytype,
-        comptime match_function: fn (context: @TypeOf(context), compatible: [:0]const u8) bool,
-    ) IteratorError!CompatibleMatchIterator(@TypeOf(context), match_function) {
-        return .{
-            .node_iter = try parent_node.iterateSubnodes(
-                dt,
-                iteration_type,
-                .{ .property_name = "compatible" },
-            ),
-            .context = context,
-        };
-    }
-
-    test subnodeCompatibleMatchIterator {
-        const dt: DeviceTree = try .fromSlice(shared.test_dtb);
-
-        var lookup: std.StringHashMapUnmanaged(void) = .empty;
-        defer lookup.deinit(std.testing.allocator);
-        try lookup.put(std.testing.allocator, "ns16550a", {});
-        try lookup.put(std.testing.allocator, "pci-host-ecam-generic", {});
-
-        const match_function = struct {
-            fn match(hash_set: *const std.StringHashMapUnmanaged(void), compatible: [:0]const u8) bool {
-                return hash_set.contains(compatible);
-            }
-        }.match;
-
-        const soc_node = (try dt.firstMatchingNode(.{ .name = "soc" })).?.node;
-
-        var iter = try soc_node.subnodeCompatibleMatchIterator(
-            dt,
-            .direct_children,
-            &lookup,
-            match_function,
-        );
-
-        const compatible_match = (try iter.next(dt)).?;
-        try std.testing.expectEqualStrings("serial@10000000", compatible_match.node.name);
-
-        const compatible_match2 = (try iter.next(dt)).?;
-        try std.testing.expectEqualStrings("pci@30000000", compatible_match2.node.name);
-
-        try shared.customExpectEqual(try iter.next(dt), null);
-    }
-
     /// Fetch an iterator over the values of the `compatible` property of a node.
     ///
     /// Returns an empty iterator if the node does not have a `compatible` property.
     pub fn compatibleIterator(node: Node, dt: DeviceTree) IteratorError!Property.Value.StringListIterator {
-        const compatible_property = (try node.firstMatchingProperty(
+        var property_iterator = try node.propertyIterator(
             dt,
             .{ .name = "compatible" },
-        )) orelse return .{ .string_list = &.{} };
+        );
+
+        const compatible_property = (try property_iterator.next()) orelse
+            return .{ .string_list = &.{} };
         return compatible_property.value.stringListIterator();
     }
 
     test compatibleIterator {
         const dt: DeviceTree = try .fromSlice(shared.test_dtb);
 
-        const test_node = (try dt.firstMatchingNode(.{ .name = "test@100000" })).?.node;
+        const test_node = blk: {
+            var node_iter = try dt.nodeIterator(
+                .root,
+                .all_children,
+                .{ .name = "test@100000" },
+            );
+            break :blk (try node_iter.next(dt)).?.node;
+        };
 
         var compatible_iter = try test_node.compatibleIterator(dt);
         try std.testing.expectEqualStrings("sifive,test1", (try compatible_iter.next()).?);
@@ -402,7 +163,12 @@ pub const Node = enum(u32) {
 
     /// Fetch the `#address-cells` property of a node if it exists.
     pub fn addressCells(node: Node, dt: DeviceTree) IteratorError!?u32 {
-        if (try node.firstMatchingProperty(dt, .{ .name = "#address-cells" })) |prop| {
+        var property_iterator = try node.propertyIterator(
+            dt,
+            .{ .name = "#address-cells" },
+        );
+
+        if (try property_iterator.next()) |prop| {
             return prop.value.toU32();
         }
 
@@ -420,7 +186,12 @@ pub const Node = enum(u32) {
 
     /// Fetch the `#size-cells` property of a node if it exists.
     pub fn sizeCells(node: Node, dt: DeviceTree) IteratorError!?u32 {
-        if (try node.firstMatchingProperty(dt, .{ .name = "#size-cells" })) |prop| {
+        var property_iterator = try node.propertyIterator(
+            dt,
+            .{ .name = "#size-cells" },
+        );
+
+        if (try property_iterator.next()) |prop| {
             return prop.value.toU32();
         }
 
@@ -440,12 +211,26 @@ pub const Node = enum(u32) {
     ///
     /// Checks for both `phandle` and `linux,phandle` properties.
     pub fn pHandle(node: Node, dt: DeviceTree) IteratorError!?PHandle {
-        if (try node.firstMatchingProperty(dt, .{ .name = "phandle" })) |prop| {
-            return prop.value.toPHandle();
+        {
+            var property_iterator = try node.propertyIterator(
+                dt,
+                .{ .name = "phandle" },
+            );
+
+            if (try property_iterator.next()) |prop| {
+                return prop.value.toPHandle();
+            }
         }
 
-        if (try node.firstMatchingProperty(dt, .{ .name = "linux,phandle" })) |prop| {
-            return prop.value.toPHandle();
+        {
+            var property_iterator = try node.propertyIterator(
+                dt,
+                .{ .name = "linux,phandle" },
+            );
+
+            if (try property_iterator.next()) |prop| {
+                return prop.value.toPHandle();
+            }
         }
 
         return null;
@@ -454,7 +239,14 @@ pub const Node = enum(u32) {
     test pHandle {
         const dt: DeviceTree = try .fromSlice(shared.test_dtb);
 
-        const plic_node = (try dt.firstMatchingNode(.{ .name = "plic@c000000" })).?;
+        const plic_node = blk: {
+            var node_iter = try dt.nodeIterator(
+                .root,
+                .all_children,
+                .{ .name = "plic@c000000" },
+            );
+            break :blk (try node_iter.next(dt)).?;
+        };
         try std.testing.expectEqualStrings("plic@c000000", plic_node.name);
 
         try shared.customExpectEqual(plic_node.node.pHandle(dt), @enumFromInt(0x03));
@@ -499,7 +291,14 @@ pub const Node = enum(u32) {
 
         try shared.customExpectEqual(try Node.root.depth(dt), 0);
 
-        const pci_node = (try dt.firstMatchingNode(.{ .name = "pci" })).?.node;
+        const pci_node = blk: {
+            var node_iter = try dt.nodeIterator(
+                .root,
+                .all_children,
+                .{ .name = "pci" },
+            );
+            break :blk (try node_iter.next(dt)).?.node;
+        };
         try shared.customExpectEqual(try pci_node.depth(dt), 2);
     }
 
@@ -558,16 +357,26 @@ pub const Node = enum(u32) {
 
         try shared.customExpectEqual(try Node.root.parent(dt), null);
 
-        const soc_node = (try dt.firstMatchingNode(.{ .name = "soc" })).?.node;
+        const soc_node = blk: {
+            var node_iter = try dt.nodeIterator(
+                .root,
+                .all_children,
+                .{ .name = "soc" },
+            );
+            break :blk (try node_iter.next(dt)).?.node;
+        };
 
         const soc_parent = try soc_node.parent(dt);
         try shared.customExpectEqual(soc_parent.?.node, Node.root);
 
-        const clint_node = (try soc_node.firstMatchingSubnode(
-            dt,
-            .direct_children,
-            .{ .name = "clint" },
-        )).?.node;
+        const clint_node = blk: {
+            var node_iter = try dt.nodeIterator(
+                soc_node,
+                .direct_children,
+                .{ .name = "clint" },
+            );
+            break :blk (try node_iter.next(dt)).?.node;
+        };
 
         const clint_parent = try clint_node.parent(dt);
         try shared.customExpectEqual(clint_parent.?.node, soc_node);
@@ -643,7 +452,14 @@ pub const Node = enum(u32) {
         const root_path = try Node.root.path(dt, buf[0..]);
         try std.testing.expectEqualStrings("/", root_path);
 
-        const virtio_mmio_node = (try dt.firstMatchingNode(.{ .name = "virtio_mmio@10001000" })).?.node;
+        const virtio_mmio_node = blk: {
+            var node_iter = try dt.nodeIterator(
+                .root,
+                .all_children,
+                .{ .name = "virtio_mmio@10001000" },
+            );
+            break :blk (try node_iter.next(dt)).?.node;
+        };
 
         const virtio_mmio_path = try virtio_mmio_node.path(dt, buf[0..]);
         try std.testing.expectEqualStrings("/soc/virtio_mmio@10001000", virtio_mmio_path);
@@ -751,14 +567,20 @@ pub const Node = enum(u32) {
                     if (match_name_no_address and name[match_name.len] == '@')
                         return true;
                 },
-                .property_name => |property_name| if (try node_with_name.node.firstMatchingProperty(
-                    dt,
-                    .{ .name = property_name },
-                )) |_| return true,
-                .property_value => |property_value| if (try node_with_name.node.firstMatchingProperty(
-                    dt,
-                    .{ .value = property_value },
-                )) |_| return true,
+                .property_name => |property_name| {
+                    var property_iter = try node_with_name.node.propertyIterator(
+                        dt,
+                        .{ .name = property_name },
+                    );
+                    if (try property_iter.next()) |_| return true;
+                },
+                .property_value => |property_value| {
+                    var property_iter = try node_with_name.node.propertyIterator(
+                        dt,
+                        .{ .value = property_value },
+                    );
+                    if (try property_iter.next()) |_| return true;
+                },
             }
 
             return false;
