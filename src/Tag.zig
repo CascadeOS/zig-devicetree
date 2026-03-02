@@ -140,5 +140,5 @@ const shared = @import("shared.zig");
 const DeviceTree = @import("DeviceTree.zig");
 
 comptime {
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
 }

@@ -25,5 +25,5 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 comptime {
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
 }

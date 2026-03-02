@@ -618,5 +618,5 @@ const Tag = @import("Tag.zig").Tag;
 const IteratorError = DeviceTree.IteratorError;
 
 comptime {
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
 }

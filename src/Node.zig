@@ -599,5 +599,5 @@ const IteratorError = DeviceTree.IteratorError;
 const CompatibleMatchIterator = DeviceTree.CompatibleMatchIterator;
 
 comptime {
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
 }

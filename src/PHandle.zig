@@ -40,5 +40,5 @@ const IteratorError = DeviceTree.IteratorError;
 const Node = @import("Node.zig").Node;
 
 comptime {
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
 }

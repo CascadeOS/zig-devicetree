@@ -801,5 +801,5 @@ const std = @import("std");
 const shared = @import("shared.zig");
 
 comptime {
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
 }
