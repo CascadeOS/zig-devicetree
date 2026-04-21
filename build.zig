@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: BSD-2-Clause
-// SPDX-FileCopyrightText: Lee Cannon <leecannon@leecannon.xyz>
+// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-FileCopyrightText: CascadeOS Contributors
 
 pub fn build(b: *std.Build) void {
     const devicetree_mod = b.addModule("DeviceTree", .{

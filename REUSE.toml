@@ -1,25 +1,25 @@
 # SPDX-License-Identifier: CC0-1.0
-# SPDX-FileCopyrightText: Lee Cannon <leecannon@leecannon.xyz>
+# SPDX-FileCopyrightText: CascadeOS Contributors
 
 version = 1
 SPDX-PackageName = "zig-devicetree"
-SPDX-PackageSupplier = "Lee Cannon <leecannon@leecannon.xyz>"
+SPDX-PackageSupplier = "CascadeOS Contributors"
 SPDX-PackageDownloadLocation = "https://github.com/CascadeOS/zig-devicetree"
 
 [[annotations]]
 path = "**.md"
 precedence = "aggregate"
 SPDX-License-Identifier = "CC0-1.0"
-SPDX-FileCopyrightText = "Lee Cannon <leecannon@leecannon.xyz>"
+SPDX-FileCopyrightText = "CascadeOS Contributors"
 
 [[annotations]]
 path = "**.dtb"
 precedence = "aggregate"
 SPDX-License-Identifier = "CC0-1.0"
-SPDX-FileCopyrightText = "Lee Cannon <leecannon@leecannon.xyz>"
+SPDX-FileCopyrightText = "CascadeOS Contributors"
 
 [[annotations]]
 path = "**.dts"
 precedence = "aggregate"
 SPDX-License-Identifier = "CC0-1.0"
-SPDX-FileCopyrightText = "Lee Cannon <leecannon@leecannon.xyz>"
+SPDX-FileCopyrightText = "CascadeOS Contributors"

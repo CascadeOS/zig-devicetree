@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: BSD-2-Clause
-// SPDX-FileCopyrightText: Lee Cannon <leecannon@leecannon.xyz>
+// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-FileCopyrightText: CascadeOS Contributors
 // SPDX-FileCopyrightText: 2006 David Gibson, IBM Corporation.
 
 //! A property of a node.
